@@ -1,0 +1,63 @@
+name: Build Windows installer
+
+# Produces the real LattixSetup.exe on a Windows runner (it can't be built on
+# Linux — PyInstaller/Inno Setup are Windows-native). Runs on demand and on
+# version tags; the installer is uploaded as a build artifact and, for tags,
+# attached to a GitHub Release.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: Lattix
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r installer/requirements-build.txt
+
+      - name: Build app with PyInstaller
+        run: pyinstaller --noconfirm installer/lattix.spec
+
+      - name: Sanity-check the frozen app exists
+        run: |
+          if (-not (Test-Path "dist/Lattix/Lattix.exe")) { throw "Lattix.exe was not produced" }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile installer
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\lattix.iss'
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LattixSetup
+          path: Lattix/installer/Output/LattixSetup.exe
+          if-no-files-found: error
+
+      - name: Attach installer to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Lattix/installer/Output/LattixSetup.exe

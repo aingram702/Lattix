@@ -1,11 +1,13 @@
 // Lattix — network layer (REST + WebSocket). Transports ONLY ciphertext.
 
+import { apiBase } from "./config.js";
+
 export class LattixApi {
   constructor() {
     this.token = null;
     this.username = null;
     this.ws = null;
-    this.handlers = { envelope: [], presence: [], status: [] };
+    this.handlers = { envelope: [], group_envelope: [], group: [], presence: [], status: [] };
   }
 
   // ---- events ----
@@ -28,7 +30,7 @@ export class LattixApi {
       headers["Content-Type"] = "application/json";
       payload = JSON.stringify(body);
     }
-    const res = await fetch(path, { method, headers, body: payload });
+    const res = await fetch(apiBase() + path, { method, headers, body: payload });
     if (!res.ok) {
       let detail = res.statusText;
       try {
@@ -62,12 +64,15 @@ export class LattixApi {
     this.token = null;
     this.username = null;
   }
+  deleteAccount() {
+    return this._req("DELETE", "/api/me");
+  }
   _setSession(tokenResp) {
     this.token = tokenResp.token;
     this.username = tokenResp.username;
   }
 
-  // ---- directory ----
+  // ---- directory / profile ----
   me() {
     return this._req("GET", "/api/me");
   }
@@ -77,8 +82,11 @@ export class LattixApi {
   searchUsers(q) {
     return this._req("GET", `/api/users?q=${encodeURIComponent(q)}`);
   }
+  setAvatar(avatar) {
+    return this._req("PUT", "/api/me/avatar", { body: { avatar } });
+  }
 
-  // ---- messaging ----
+  // ---- messaging (1:1) ----
   sendMessage(payload) {
     return this._req("POST", "/api/messages", { body: payload });
   }
@@ -87,6 +95,32 @@ export class LattixApi {
   }
   conversation(peer, since = 0) {
     return this._req("GET", `/api/conversations/${encodeURIComponent(peer)}?since=${since}`);
+  }
+
+  // ---- groups ----
+  createGroup(payload) {
+    return this._req("POST", "/api/groups", { body: payload });
+  }
+  listGroups() {
+    return this._req("GET", "/api/groups");
+  }
+  getGroup(id) {
+    return this._req("GET", `/api/groups/${id}`);
+  }
+  addGroupMember(id, username) {
+    return this._req("POST", `/api/groups/${id}/members`, { body: { username } });
+  }
+  removeGroupMember(id, username) {
+    return this._req("DELETE", `/api/groups/${id}/members/${encodeURIComponent(username)}`);
+  }
+  sendGroupMessage(id, payload) {
+    return this._req("POST", `/api/groups/${id}/messages`, { body: payload });
+  }
+  sendGroupFile(id, payload) {
+    return this._req("POST", `/api/groups/${id}/messages/file`, { body: payload });
+  }
+  groupMessages(id, since = 0) {
+    return this._req("GET", `/api/groups/${id}/messages?since=${since}`);
   }
 
   // ---- files ----
@@ -105,8 +139,14 @@ export class LattixApi {
   connectSocket() {
     if (!this.token) return;
     this._closeSocket();
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}://${location.host}/ws?token=${encodeURIComponent(this.token)}`;
+    const base = apiBase();
+    let url;
+    if (base) {
+      url = base.replace(/^http/, "ws") + `/ws?token=${encodeURIComponent(this.token)}`;
+    } else {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      url = `${proto}://${location.host}/ws?token=${encodeURIComponent(this.token)}`;
+    }
     const ws = new WebSocket(url);
     this.ws = ws;
 
@@ -119,6 +159,8 @@ export class LattixApi {
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "envelope") this._emit("envelope", msg.envelope);
+      else if (msg.type === "group_envelope") this._emit("group_envelope", msg.envelope);
+      else if (msg.type === "group") this._emit("group", msg);
       else if (msg.type === "presence") this._emit("presence", msg);
     };
 

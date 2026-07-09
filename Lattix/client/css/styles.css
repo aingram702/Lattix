@@ -1,6 +1,8 @@
-/* Lattix — dark theme */
+/* Lattix — theming
+   Four themes via :root[data-theme]: dark (default), light, monokai, kali.
+   Chat-window accent color via :root[data-chat]: red | green | blue | pink. */
 
-:root {
+:root, :root[data-theme="dark"] {
   --bg:        #0c0d12;
   --bg-2:      #101219;
   --surface:   #16181f;
@@ -16,6 +18,82 @@
   --danger:    #ff5c6c;
   --shadow:    0 12px 40px rgba(0,0,0,.45);
   --radius:    14px;
+  --mine-grad: linear-gradient(135deg, #6b5bff, #7c5cff);
+  --app-bg:
+    radial-gradient(1100px 600px at 12% -8%, #1a1740 0%, transparent 55%),
+    radial-gradient(900px 500px at 108% 12%, #10283a 0%, transparent 50%),
+    var(--bg);
+  --kali-badge: none;
+}
+
+:root[data-theme="light"] {
+  --bg:        #eef1f7;
+  --bg-2:      #ffffff;
+  --surface:   #ffffff;
+  --surface-2: #eef1f7;
+  --border:    #dde2ec;
+  --border-2:  #ccd3e0;
+  --text:      #1a1f2b;
+  --muted:     #6b7280;
+  --accent:    #6b46ff;
+  --accent-2:  #5a37e0;
+  --accent-dim:#6b46ff1a;
+  --teal:      #0f9b86;
+  --danger:    #e23744;
+  --shadow:    0 12px 40px rgba(30,40,80,.14);
+  --mine-grad: linear-gradient(135deg, #6b46ff, #7c5cff);
+  --app-bg:
+    radial-gradient(1100px 600px at 12% -8%, #e5defb 0%, transparent 55%),
+    radial-gradient(900px 500px at 108% 12%, #d8ecf7 0%, transparent 50%),
+    var(--bg);
+  --kali-badge: none;
+}
+
+:root[data-theme="monokai"] {
+  --bg:        #1e1f1c;
+  --bg-2:      #272822;
+  --surface:   #272822;
+  --surface-2: #33342c;
+  --border:    #3e3d32;
+  --border-2:  #49483e;
+  --text:      #f8f8f2;
+  --muted:     #a6a28c;
+  --accent:    #66d9ef;
+  --accent-2:  #a6e22e;
+  --accent-dim:#66d9ef22;
+  --teal:      #a6e22e;
+  --danger:    #f92672;
+  --shadow:    0 12px 40px rgba(0,0,0,.5);
+  --mine-grad: linear-gradient(135deg, #f92672, #fd5c9a);
+  --app-bg:
+    radial-gradient(1100px 600px at 12% -8%, #3a2f1f 0%, transparent 55%),
+    radial-gradient(900px 500px at 108% 12%, #1f3330 0%, transparent 50%),
+    var(--bg);
+  --kali-badge: none;
+}
+
+:root[data-theme="kali"] {
+  --bg:        #0a0e14;
+  --bg-2:      #0d1220;
+  --surface:   #0f1626;
+  --surface-2: #152033;
+  --border:    #1c2b44;
+  --border-2:  #24395a;
+  --text:      #e6edf6;
+  --muted:     #7d93b0;
+  --accent:    #1793d1;   /* Kali blue */
+  --accent-2:  #4fc3f7;
+  --accent-dim:#1793d122;
+  --teal:      #2ee6c0;
+  --danger:    #ff5c6c;
+  --shadow:    0 12px 40px rgba(0,0,0,.55);
+  --mine-grad: linear-gradient(135deg, #1179c0, #1793d1);
+  --app-bg:
+    radial-gradient(1000px 620px at 15% -10%, #0d2b45 0%, transparent 55%),
+    radial-gradient(900px 500px at 110% 10%, #082033 0%, transparent 50%),
+    var(--bg);
+  /* Embedded Kali Linux dragon mark (data-URI SVG), shown as a watermark. */
+  --kali-badge: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath fill='%231793d1' d='M8 30c14-6 30-4 42 3 5 3 9 7 12 12-6-3-13-4-20-3 8 3 14 9 17 17-6-5-13-8-21-8 6 4 10 10 11 17-5-6-12-10-20-11-6-1-12 0-17 2 4-5 10-8 16-9-8-2-16 0-23 5 5-9 13-15 23-17-9-1-19 1-27 6 5-11 15-19 27-22-13-2-27 1-38 8 6-9 15-15 25-18-11-1-22 1-31 6 4-6 10-11 17-15-9 0-18 3-25 8 2-4 5-8 9-11z'/%3E%3C/svg%3E");
 }
 
 * { box-sizing: border-box; }
@@ -27,10 +105,7 @@
 html, body { height: 100%; margin: 0; }
 body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
-  background:
-    radial-gradient(1100px 600px at 12% -8%, #1a1740 0%, transparent 55%),
-    radial-gradient(900px 500px at 108% 12%, #10283a 0%, transparent 50%),
-    var(--bg);
+  background: var(--app-bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
@@ -181,7 +256,7 @@ input[type=file] { padding: 10px; }
 .row.left { justify-content: flex-start; }
 .bubble { max-width: min(560px, 74%); padding: 9px 13px; border-radius: 16px; font-size: 14px; line-height: 1.5; word-break: break-word; }
 .bubble.theirs { background: var(--surface-2); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
-.bubble.mine { background: linear-gradient(135deg, #6b5bff, #7c5cff); color: white; border-bottom-right-radius: 5px; }
+.bubble.mine { background: var(--mine-grad); color: white; border-bottom-right-radius: 5px; }
 .msg-text { white-space: pre-wrap; }
 .msg-meta { font-size: 10.5px; opacity: .7; margin-top: 4px; text-align: right; display: flex; gap: 4px; justify-content: flex-end; align-items: center; }
 .bubble.theirs .verified { color: var(--teal); }
@@ -211,10 +286,22 @@ input[type=file] { padding: 10px; }
 }
 .send-btn {
   width: 42px; height: 42px; border: 0; border-radius: 12px; color: white; font-size: 16px;
-  background: linear-gradient(135deg, var(--accent), #6b7bff); box-shadow: 0 4px 14px rgba(124,92,255,.4);
+  background: var(--mine-grad); box-shadow: 0 4px 14px rgba(0,0,0,.25);
   flex-shrink: 0; transition: .15s;
 }
 .send-btn:hover { filter: brightness(1.1); }
+
+/* ---------------- Chat-window color (scoped to the conversation) ---------------- */
+:root[data-chat="red"]   { --chat-grad: linear-gradient(135deg, #ff4d5e, #e11d48); }
+:root[data-chat="green"] { --chat-grad: linear-gradient(135deg, #22c55e, #15a34a); }
+:root[data-chat="blue"]  { --chat-grad: linear-gradient(135deg, #3b82f6, #2563eb); }
+:root[data-chat="pink"]  { --chat-grad: linear-gradient(135deg, #ec4899, #db2777); }
+:root[data-chat="red"]   .bubble.mine, :root[data-chat="red"]   .send-btn,
+:root[data-chat="green"] .bubble.mine, :root[data-chat="green"] .send-btn,
+:root[data-chat="blue"]  .bubble.mine, :root[data-chat="blue"]  .send-btn,
+:root[data-chat="pink"]  .bubble.mine, :root[data-chat="pink"]  .send-btn {
+  background: var(--chat-grad);
+}
 
 /* ---------------- Modals ---------------- */
 .modal { position: fixed; inset: 0; background: rgba(3,4,8,.6); backdrop-filter: blur(4px);
@@ -260,3 +347,119 @@ input[type=file] { padding: 10px; }
   body.chat-open .main { display: flex; }
   #back-btn { display: grid; }
 }
+
+/* ================= Added features ================= */
+
+/* Avatars can render an uploaded profile image */
+.avatar { background-size: cover; background-position: center; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar.group { border-radius: 12px; }
+
+/* Kali dragon watermark — only visible under the Kali theme */
+.kali-badge {
+  display: none; width: 46px; height: 46px; margin-left: auto;
+  background: var(--kali-badge) center/contain no-repeat; opacity: .9;
+}
+:root[data-theme="kali"] .kali-badge { display: block; }
+:root[data-theme="kali"] .empty-lattice { background: var(--kali-badge) center/contain no-repeat; }
+:root[data-theme="kali"] .empty-lattice svg { opacity: 0; }
+
+/* Header actions / kebab menu */
+.header-actions { display: flex; align-items: center; gap: 4px; position: relative; }
+.menu {
+  position: absolute; right: 0; top: 40px; z-index: 30; min-width: 200px;
+  background: var(--surface); border: 1px solid var(--border-2); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 6px;
+}
+.menu button {
+  display: flex; width: 100%; align-items: center; gap: 9px; padding: 9px 11px;
+  border: 0; background: transparent; color: var(--text); border-radius: 9px;
+  font-size: 13.5px; text-align: left;
+}
+.menu button:hover { background: var(--surface-2); }
+.menu button.danger { color: var(--danger); }
+.menu .menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
+.disappearing-flag { color: var(--muted); font-size: 11px; }
+
+/* Group message sender label */
+.msg-sender { font-size: 11px; font-weight: 700; color: var(--accent-2); margin-bottom: 2px; }
+
+/* ---- Settings & big modals ---- */
+.modal-card.wide { max-width: 560px; }
+.modal-body { max-height: min(70vh, 560px); overflow-y: auto; padding-right: 4px; }
+.set-section { border-top: 1px solid var(--border); padding: 16px 2px; }
+.set-section:first-child { border-top: 0; padding-top: 4px; }
+.set-section h4 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; }
+.set-row .set-label { font-size: 14px; }
+.set-row .set-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.set-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn {
+  border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text);
+  padding: 9px 13px; border-radius: 10px; font-size: 13px; font-weight: 600; transition: .15s;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent-2); }
+.btn.danger { color: var(--danger); border-color: transparent; background: #ff5c6c1a; }
+.btn.danger:hover { background: #ff5c6c2e; border-color: var(--danger); }
+.btn.primary-btn { background: var(--mine-grad); color: white; border: 0; }
+
+/* Segmented choices (themes) */
+.choice-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.choice {
+  display: flex; align-items: center; gap: 9px; padding: 10px; border-radius: 11px;
+  border: 1px solid var(--border-2); background: var(--surface-2); font-size: 13.5px; font-weight: 600;
+}
+.choice.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+.choice .swatch-mini { width: 20px; height: 20px; border-radius: 6px; border: 1px solid rgba(255,255,255,.15); }
+
+/* Color swatches (chat color) */
+.swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+.swatch { width: 34px; height: 34px; border-radius: 10px; border: 2px solid transparent; cursor: pointer; }
+.swatch.active { border-color: var(--text); box-shadow: 0 0 0 2px var(--accent-dim); }
+.swatch[data-c="default"] { background: linear-gradient(135deg,#6b5bff,#7c5cff); }
+.swatch[data-c="red"]   { background: linear-gradient(135deg,#ff4d5e,#e11d48); }
+.swatch[data-c="green"] { background: linear-gradient(135deg,#22c55e,#15a34a); }
+.swatch[data-c="blue"]  { background: linear-gradient(135deg,#3b82f6,#2563eb); }
+.swatch[data-c="pink"]  { background: linear-gradient(135deg,#ec4899,#db2777); }
+
+/* Toggle switch */
+.switch { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
+.switch input { display: none; }
+.switch .track {
+  position: absolute; inset: 0; background: var(--border-2); border-radius: 12px; transition: .15s;
+}
+.switch .track::after {
+  content: ""; position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  background: white; top: 3px; left: 3px; transition: .15s;
+}
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(18px); }
+
+/* Profile image editor */
+.avatar-edit { display: flex; align-items: center; gap: 14px; }
+.avatar-preview { width: 64px; height: 64px; border-radius: 18px; background: var(--surface-2); display: grid; place-items: center; overflow: hidden; }
+.avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Blocked list */
+.blocked-list { display: flex; flex-direction: column; gap: 6px; }
+.blocked-item { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; border-radius: 10px; background: var(--surface-2); font-size: 13.5px; }
+
+/* Member chips (group create / info) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 20px;
+  background: var(--accent-dim); color: var(--accent-2); font-size: 12.5px; font-weight: 600; }
+.chip button { border: 0; background: transparent; color: inherit; font-size: 14px; line-height: 1; }
+.member-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; }
+
+/* Share / QR */
+.qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.qr-canvas { width: 220px; height: 220px; image-rendering: pixelated; border-radius: 12px; background: #fff; padding: 12px; }
+.share-url { width: 100%; display: flex; gap: 8px; }
+.share-url input { flex: 1; font-family: ui-monospace, monospace; font-size: 12px; }
+
+/* Disappearing timer options */
+.ttl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ttl-opt { padding: 10px; border-radius: 10px; border: 1px solid var(--border-2); background: var(--surface-2);
+  font-size: 13px; font-weight: 600; text-align: center; }
+.ttl-opt.active { border-color: var(--accent); color: var(--accent-2); box-shadow: 0 0 0 2px var(--accent-dim); }

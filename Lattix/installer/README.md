@@ -8,9 +8,11 @@ need Python installed.** Launching Lattix starts the local relay on
 | Platform | Output | Wrapper |
 |----------|--------|---------|
 | Windows  | `LattixSetup.exe` | [Inno Setup](https://jrsoftware.org/isinfo.php) |
+| macOS    | `Lattix-<ver>-<arch>.dmg` (drag-to-install `.app`) | `hdiutil` |
 | Linux    | `Lattix-<ver>-<arch>.run` (self-extracting) | built-in |
 
 Data is stored per-user: `%LOCALAPPDATA%\Lattix` on Windows,
+`~/Library/Application Support/Lattix` on macOS,
 `~/.local/share/lattix` on Linux.
 
 > Each installer is a native binary and **must be built on its own OS** —
@@ -44,6 +46,28 @@ chmod +x Lattix-1.1.0-x86_64.run
 ./Lattix-1.1.0-x86_64.run --user    # force per-user even as root
 ./Lattix-1.1.0-x86_64.run --uninstall
 ```
+
+---
+
+## macOS — `.dmg`
+
+A standard drag-to-install disk image containing `Lattix.app` next to an
+`/Applications` shortcut.
+
+**Build via CI (recommended):** the
+[`build-macos-installer`](../../.github/workflows/build-macos-installer.yml)
+workflow builds it on `macos-latest`. Download the `.dmg` from the run's
+Artifacts, or push a `v*` tag to attach it to a release.
+
+**Build locally on macOS** (needs `python3`):
+
+```bash
+installer/macos/build.sh            # -> installer/macos/Output/Lattix-<ver>-<arch>.dmg
+```
+
+Then open the `.dmg` and drag **Lattix** to **Applications**. The app is not
+code-signed, so the first launch needs a right-click → **Open** (or
+*System Settings → Privacy & Security → Open Anyway*).
 
 ---
 
@@ -92,7 +116,9 @@ Output: `installer\Output\LattixSetup.exe`.
 | `lattix.spec` | PyInstaller build (bundles `server/` code + `client/` assets); icon/version are applied on Windows only. |
 | `requirements-build.txt` | Build-time deps (PyInstaller). |
 | `version_info.txt`, `lattix.ico` | Windows version resource + multi-resolution icon. |
+| `lattix.icns` | macOS app-bundle icon. |
 | `lattix.iss`, `build.ps1`, `build.bat` | Windows: Inno Setup script → `LattixSetup.exe`, plus local build scripts. |
+| `macos/make_dmg.sh`, `macos/build.sh` | macOS: package `Lattix.app` into a `.dmg`, plus one-command build. |
 | `linux/install.sh` | Linux: post-extraction installer (app-menu entry, `lattix` launcher, uninstall). |
 | `linux/lattix.desktop` | Linux: desktop-entry template. |
 | `linux/make_selfextract.sh` | Linux: wraps the PyInstaller bundle into a `.run` self-extractor. |

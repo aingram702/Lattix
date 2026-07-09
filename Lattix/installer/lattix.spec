@@ -9,9 +9,15 @@
 # which installer/lattix.iss then wraps into LattixSetup.exe.
 
 import os
+import sys
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = os.path.abspath(os.getcwd())
+IS_WINDOWS = sys.platform.startswith("win")
+# The .ico and Windows version resource only apply to a Windows build; passing
+# them on Linux/macOS is at best ignored and at worst an error, so gate them.
+EXE_ICON = os.path.join(ROOT, "installer", "lattix.ico") if IS_WINDOWS else None
+EXE_VERSION = os.path.join(ROOT, "installer", "version_info.txt") if IS_WINDOWS else None
 
 hiddenimports = []
 for pkg in ("uvicorn", "anyio", "fastapi", "starlette"):
@@ -39,8 +45,8 @@ exe = EXE(
     exclude_binaries=True,
     name="Lattix",
     console=False,               # windowed app; the server runs in the background
-    icon=os.path.join(ROOT, "installer", "lattix.ico"),
-    version=os.path.join(ROOT, "installer", "version_info.txt"),
+    icon=EXE_ICON,
+    version=EXE_VERSION,
 )
 
 coll = COLLECT(

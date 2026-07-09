@@ -1,23 +1,61 @@
-# Lattix Windows installer
+# Lattix installers
 
-This folder builds **`LattixSetup.exe`** — a standalone, double-click installer
-for Windows. It bundles a Python runtime, the FastAPI relay, and the full web
-client via [PyInstaller](https://pyinstaller.org/), then wraps that into an
-installer with [Inno Setup](https://jrsoftware.org/isinfo.php). **End users do
-not need Python installed.**
+Standalone installers that bundle a Python runtime, the FastAPI relay, and the
+full web client via [PyInstaller](https://pyinstaller.org/). **End users do not
+need Python installed.** Launching Lattix starts the local relay on
+`http://localhost:8000` and opens it in the browser.
 
-After installing, launching **Lattix** starts the local relay on
-`http://localhost:8000` and opens it in the browser. The SQLite database lives
-in `%LOCALAPPDATA%\Lattix`.
+| Platform | Output | Wrapper |
+|----------|--------|---------|
+| Windows  | `LattixSetup.exe` | [Inno Setup](https://jrsoftware.org/isinfo.php) |
+| Linux    | `Lattix-<ver>-<arch>.run` (self-extracting) | built-in |
 
-> The installer is a Windows binary and **must be built on Windows** —
-> PyInstaller and Inno Setup are native Windows tools and cannot cross-compile
-> from Linux/macOS. Use one of the two paths below.
+Data is stored per-user: `%LOCALAPPDATA%\Lattix` on Windows,
+`~/.local/share/lattix` on Linux.
 
-## Option A — build automatically with GitHub Actions (recommended)
+> Each installer is a native binary and **must be built on its own OS** —
+> PyInstaller doesn't cross-compile. The bundled GitHub Actions workflows build
+> both automatically (no local toolchain needed).
+
+---
+
+## Linux — self-extracting `.run`
+
+A single executable installer. Running it unpacks the bundled app and installs
+it with an app-menu entry and a `lattix` launcher — per-user by default, or
+system-wide (`/opt/lattix`) when run as root.
+
+**Build via CI (recommended):** the
+[`build-linux-installer`](../../.github/workflows/build-linux-installer.yml)
+workflow builds it on `ubuntu-latest`. Download the `.run` from the run's
+Artifacts, or push a `v*` tag to attach it to a release.
+
+**Build locally on Linux** (needs `python3` + venv):
+
+```bash
+installer/linux/build.sh            # -> installer/linux/Output/Lattix-<ver>-<arch>.run
+```
+
+**Install / uninstall:**
+
+```bash
+chmod +x Lattix-1.1.0-x86_64.run
+./Lattix-1.1.0-x86_64.run           # per-user (or system-wide if run as root)
+./Lattix-1.1.0-x86_64.run --user    # force per-user even as root
+./Lattix-1.1.0-x86_64.run --uninstall
+```
+
+---
+
+## Windows — `LattixSetup.exe`
+
+Bundles the app and wraps it with Inno Setup into a double-click installer with
+Start Menu / Desktop shortcuts.
+
+### Build via CI (recommended)
 
 No Windows machine required. The workflow
-[`.github/workflows/build-windows-installer.yml`](../../.github/workflows/build-windows-installer.yml)
+[`build-windows-installer`](../../.github/workflows/build-windows-installer.yml)
 builds the installer on a `windows-latest` runner.
 
 - **On demand:** GitHub → *Actions* → *Build Windows installer* → *Run
@@ -25,7 +63,7 @@ builds the installer on a `windows-latest` runner.
 - **On release:** push a tag like `v1.1.0`; the installer is built and attached
   to the GitHub Release automatically.
 
-## Option B — build locally on Windows
+### Build locally on Windows
 
 Requirements:
 
@@ -50,13 +88,15 @@ Output: `installer\Output\LattixSetup.exe`.
 
 | File | Purpose |
 |------|---------|
-| `lattix_launcher.py` | Frozen entry point — configures paths, starts the relay, opens the browser. |
-| `lattix.spec` | PyInstaller build (bundles `server/` code + `client/` assets). |
-| `version_info.txt` | Windows version resource embedded in `Lattix.exe`. |
-| `lattix.ico` | Multi-resolution app/installer icon. |
-| `lattix.iss` | Inno Setup script → `LattixSetup.exe`. |
-| `build.ps1` / `build.bat` | One-command local build. |
+| `lattix_launcher.py` | Frozen entry point (both OSes) — configures paths, starts the relay, opens the browser. |
+| `lattix.spec` | PyInstaller build (bundles `server/` code + `client/` assets); icon/version are applied on Windows only. |
 | `requirements-build.txt` | Build-time deps (PyInstaller). |
+| `version_info.txt`, `lattix.ico` | Windows version resource + multi-resolution icon. |
+| `lattix.iss`, `build.ps1`, `build.bat` | Windows: Inno Setup script → `LattixSetup.exe`, plus local build scripts. |
+| `linux/install.sh` | Linux: post-extraction installer (app-menu entry, `lattix` launcher, uninstall). |
+| `linux/lattix.desktop` | Linux: desktop-entry template. |
+| `linux/make_selfextract.sh` | Linux: wraps the PyInstaller bundle into a `.run` self-extractor. |
+| `linux/build.sh` | Linux: one-command local build. |
 
 ## Notes
 

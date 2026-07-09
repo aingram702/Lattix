@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Lattix runtime data (encrypted blobs + keys directory)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Node (only needed to rebuild the vendored crypto bundle)
+scripts/node_modules/
+scripts/package-lock.json
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.log

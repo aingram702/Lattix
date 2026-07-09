@@ -23,19 +23,19 @@ NOT the root of trust for message security.
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import os
 import secrets
 import time
 import uuid
+from collections import defaultdict, deque
 from typing import Optional
 
 from fastapi import (
-    FastAPI, HTTPException, Depends, Header, UploadFile, File, Form, WebSocket,
-    WebSocketDisconnect,
+    FastAPI, HTTPException, Depends, Header, Request, UploadFile, File, Form,
+    WebSocket, WebSocketDisconnect,
 )
-from fastapi.responses import Response, FileResponse, JSONResponse
+from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import database as db
@@ -49,8 +49,12 @@ from .models import (
 # --------------------------------------------------------------------------- #
 CLIENT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "client")
 MAX_FILE_BYTES = int(os.environ.get("LATTIX_MAX_FILE_MB", "50")) * 1024 * 1024
+FILE_READ_CHUNK = 1024 * 1024
 TOKEN_TTL = 60 * 60 * 12  # 12 hours
 PBKDF2_ITERS = 200_000
+# A dummy salt used to run the password hash on a non-existent user too, so
+# login timing doesn't reveal whether a username exists.
+_DUMMY_LOGIN_SALT = secrets.token_hex(16)
 
 app = FastAPI(title="Lattix", version="1.0.0", docs_url="/api/docs")
 
@@ -67,8 +71,13 @@ _tokens: dict[str, dict] = {}  # token -> {username, expires_at}
 
 
 def _issue_token(username: str) -> TokenResponse:
+    now = time.time()
+    # Opportunistically sweep expired tokens so the store doesn't grow forever.
+    for t, rec in list(_tokens.items()):
+        if rec["expires_at"] < now:
+            _tokens.pop(t, None)
     token = secrets.token_urlsafe(32)
-    expires_at = time.time() + TOKEN_TTL
+    expires_at = now + TOKEN_TTL
     _tokens[token] = {"username": username, "expires_at": expires_at}
     return TokenResponse(token=token, username=username, expires_at=expires_at)
 
@@ -104,10 +113,32 @@ def _hash_secret(secret: str, salt_hex: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Basic in-memory rate limiting for auth endpoints (per-IP sliding window)
+# --------------------------------------------------------------------------- #
+RATE_LIMIT_WINDOW = 300  # seconds
+RATE_LIMIT_MAX = 10  # attempts per window per (scope, ip)
+
+_rate_buckets: dict[str, deque] = defaultdict(deque)
+
+
+def _enforce_rate_limit(request: Request, scope: str) -> None:
+    ip = request.client.host if request.client else "unknown"
+    key = f"{scope}:{ip}"
+    now = time.time()
+    bucket = _rate_buckets[key]
+    while bucket and now - bucket[0] > RATE_LIMIT_WINDOW:
+        bucket.popleft()
+    if len(bucket) >= RATE_LIMIT_MAX:
+        raise HTTPException(429, "Too many attempts — try again later")
+    bucket.append(now)
+
+
+# --------------------------------------------------------------------------- #
 # Auth / directory endpoints
 # --------------------------------------------------------------------------- #
 @app.post("/api/register", response_model=TokenResponse)
-def register(req: RegisterRequest) -> TokenResponse:
+def register(req: RegisterRequest, request: Request) -> TokenResponse:
+    _enforce_rate_limit(request, "register")
     if db.user_exists(req.username):
         raise HTTPException(409, "Username already taken")
     salt = secrets.token_hex(16)
@@ -123,13 +154,15 @@ def register(req: RegisterRequest) -> TokenResponse:
 
 
 @app.post("/api/login", response_model=TokenResponse)
-def login(req: LoginRequest) -> TokenResponse:
+def login(req: LoginRequest, request: Request) -> TokenResponse:
+    _enforce_rate_limit(request, "login")
     user = db.get_user(req.username)
-    if not user:
-        raise HTTPException(404, "No such user")
-    expected = user["auth_hash"]
-    got = _hash_secret(req.auth_secret, user["auth_salt"])
-    if not secrets.compare_digest(expected, got):
+    # Hash against a dummy salt when the user doesn't exist so the response
+    # carries the same status/timing either way — this avoids leaking
+    # whether a given username is registered (user enumeration).
+    salt = user["auth_salt"] if user else _DUMMY_LOGIN_SALT
+    got = _hash_secret(req.auth_secret, salt)
+    if not user or not secrets.compare_digest(user["auth_hash"], got):
         raise HTTPException(401, "Invalid credentials")
     return _issue_token(req.username)
 
@@ -194,7 +227,7 @@ async def send_file_message(
     payload.setdefault("filename", req.filename)
     payload.setdefault("mime", req.mime)
     payload.setdefault("size", req.size)
-    env = db.store_envelope(me, req.recipient, "file", payload)
+    env = db.store_envelope(me, req.recipient, "file", payload, file_id=req.file_id)
     await manager.deliver(env)
     return env
 
@@ -218,16 +251,28 @@ async def upload_file(
     size: int = Form(...),
     me: str = Depends(require_user),
 ) -> dict:
-    data = await file.read()
-    if len(data) > MAX_FILE_BYTES:
-        raise HTTPException(413, f"File exceeds {MAX_FILE_BYTES // (1024*1024)} MB limit")
+    # Read in bounded chunks so an oversized upload is rejected before it can
+    # exhaust server memory/disk, rather than after buffering it in full.
+    data = bytearray()
+    while True:
+        chunk = await file.read(FILE_READ_CHUNK)
+        if not chunk:
+            break
+        data.extend(chunk)
+        if len(data) > MAX_FILE_BYTES:
+            raise HTTPException(413, f"File exceeds {MAX_FILE_BYTES // (1024*1024)} MB limit")
     file_id = uuid.uuid4().hex
-    db.store_file(file_id, me, data, size)
+    db.store_file(file_id, me, bytes(data), size)
     return {"file_id": file_id}
 
 
 @app.get("/api/files/{file_id}")
-def download_file(file_id: str, _me: str = Depends(require_user)) -> Response:
+def download_file(file_id: str, me: str = Depends(require_user)) -> Response:
+    # Only the uploader or a sender/recipient of a message that references
+    # this file may fetch it — file IDs must not act as bearer capabilities
+    # for any authenticated user.
+    if not db.user_can_access_file(me, file_id):
+        raise HTTPException(404, "File not found")
     rec = db.get_file(file_id)
     if not rec:
         raise HTTPException(404, "File not found")
@@ -267,9 +312,11 @@ class ConnectionManager:
                     self.disconnect(target, ws)
 
     async def presence(self, username: str, online: bool) -> None:
+        """Notify only this user's contacts — presence shouldn't be
+        observable by every authenticated user on the server."""
         msg = {"type": "presence", "username": username, "online": online}
-        for conns in self.active.values():
-            for ws in list(conns):
+        for peer in db.list_contacts(username):
+            for ws in list(self.active.get(peer, set())):
                 try:
                     await ws.send_json(msg)
                 except Exception:

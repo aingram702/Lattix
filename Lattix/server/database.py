@@ -58,12 +58,14 @@ def init_db() -> None:
                 recipient    TEXT NOT NULL,
                 kind         TEXT NOT NULL,        -- 'message' | 'file'
                 payload      TEXT NOT NULL,        -- opaque JSON (ciphertext, kem_ct, sig...)
+                file_id      TEXT,                 -- set for kind='file'; links to files.id
                 created_at   REAL NOT NULL,
                 FOREIGN KEY (sender)    REFERENCES users(username) ON DELETE CASCADE,
                 FOREIGN KEY (recipient) REFERENCES users(username) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_env_recipient ON envelopes(recipient, id);
             CREATE INDEX IF NOT EXISTS idx_env_sender    ON envelopes(sender, id);
+            CREATE INDEX IF NOT EXISTS idx_env_file_id   ON envelopes(file_id);
 
             CREATE TABLE IF NOT EXISTS files (
                 id           TEXT PRIMARY KEY,     -- uuid
@@ -75,6 +77,11 @@ def init_db() -> None:
             );
             """
         )
+        # Migration for databases created before file_id was added.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(envelopes)")}
+        if "file_id" not in cols:
+            conn.execute("ALTER TABLE envelopes ADD COLUMN file_id TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_env_file_id ON envelopes(file_id)")
         conn.commit()
 
 
@@ -117,10 +124,13 @@ def user_exists(username: str) -> bool:
 def search_users(query: str, limit: int = 25) -> list[dict[str, Any]]:
     with _lock:
         conn = _connect()
+        # Escape SQL LIKE wildcards in user input so a search for e.g. "%" or
+        # "_" doesn't behave as a wildcard match instead of a literal search.
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         rows = conn.execute(
-            "SELECT username, fingerprint FROM users WHERE username LIKE ? "
+            "SELECT username, fingerprint FROM users WHERE username LIKE ? ESCAPE '\\' "
             "ORDER BY username LIMIT ?",
-            (f"%{query}%", limit),
+            (f"%{escaped}%", limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -129,14 +139,16 @@ def search_users(query: str, limit: int = 25) -> list[dict[str, Any]]:
 # Envelopes (encrypted messages / file notifications)
 # ----------------------------------------------------------------------------
 
-def store_envelope(sender: str, recipient: str, kind: str, payload: dict) -> dict:
+def store_envelope(
+    sender: str, recipient: str, kind: str, payload: dict, file_id: Optional[str] = None
+) -> dict:
     with _lock:
         conn = _connect()
         now = time.time()
         cur = conn.execute(
-            "INSERT INTO envelopes (sender, recipient, kind, payload, created_at)"
-            " VALUES (?,?,?,?,?)",
-            (sender, recipient, kind, json.dumps(payload), now),
+            "INSERT INTO envelopes (sender, recipient, kind, payload, file_id, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (sender, recipient, kind, json.dumps(payload), file_id, now),
         )
         conn.commit()
         return {
@@ -213,6 +225,23 @@ def store_file(file_id: str, owner: str, ciphertext: bytes, size: int) -> None:
             (file_id, owner, ciphertext, size, time.time()),
         )
         conn.commit()
+
+
+def user_can_access_file(username: str, file_id: str) -> bool:
+    """A user may fetch a file blob only if they uploaded it, or it was sent
+    to them (or by them) as a file-message envelope. Prevents any
+    authenticated user from downloading arbitrary files by guessing/
+    observing a file_id (IDOR)."""
+    with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT 1 FROM files WHERE id = ? AND owner = ? "
+            "UNION "
+            "SELECT 1 FROM envelopes WHERE file_id = ? AND (sender = ? OR recipient = ?) "
+            "LIMIT 1",
+            (file_id, username, file_id, username, username),
+        ).fetchone()
+        return row is not None
 
 
 def get_file(file_id: str) -> Optional[dict]:

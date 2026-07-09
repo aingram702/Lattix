@@ -7,10 +7,23 @@ client's encryption scheme.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 USERNAME_RE = r"^[a-zA-Z0-9_.-]{3,32}$"
+
+# Envelope payloads carry small crypto material (ciphertext, wrapped keys,
+# signatures) — actual file content goes through /api/files instead. Cap the
+# size so an authenticated user can't exhaust storage/memory with oversized
+# JSON bodies on the message endpoints (which have no upload size limit).
+MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
+
+
+def _check_payload_size(payload: dict[str, Any]) -> dict[str, Any]:
+    if len(json.dumps(payload)) > MAX_PAYLOAD_BYTES:
+        raise ValueError(f"payload exceeds {MAX_PAYLOAD_BYTES} bytes")
+    return payload
 
 
 class RegisterRequest(BaseModel):
@@ -52,6 +65,11 @@ class SendMessageRequest(BaseModel):
     def lower(cls, v: str) -> str:
         return v.lower()
 
+    @field_validator("payload")
+    @classmethod
+    def payload_size(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _check_payload_size(v)
+
 
 class SendFileMessageRequest(BaseModel):
     recipient: str = Field(..., pattern=USERNAME_RE)
@@ -65,6 +83,11 @@ class SendFileMessageRequest(BaseModel):
     @classmethod
     def lower(cls, v: str) -> str:
         return v.lower()
+
+    @field_validator("payload")
+    @classmethod
+    def payload_size(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _check_payload_size(v)
 
 
 class TokenResponse(BaseModel):

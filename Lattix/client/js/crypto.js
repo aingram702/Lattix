@@ -109,20 +109,23 @@ async function unwrapCek(keyEntry, myKemSecretB64) {
 }
 
 // ---- messages ----
-export async function encryptMessage(plaintext, recipients, senderDsaSecretB64) {
+// `context` binds a signature to a scope (e.g. a specific group) so a signed
+// envelope can't be replayed into a different conversation. It is empty for
+// 1:1 chats, keeping those signatures identical to earlier versions.
+export async function encryptMessage(plaintext, recipients, senderDsaSecretB64, context = "") {
   const cekRaw = randomBytes(32);
   const cek = await importAesKey(cekRaw, ["encrypt"]);
   const iv = randomBytes(12);
   const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, cek, enc.encode(plaintext)));
   const keys = await wrapCekForParties(cekRaw, recipients);
-  const transcript = buildTranscript(enc.encode("msg"), iv, ct, keys);
+  const transcript = buildTranscript(enc.encode("msg" + context), iv, ct, keys);
   const signature = ml_dsa65.sign(b64ToBytes(senderDsaSecretB64), transcript);
   return { iv: bytesToB64(iv), ciphertext: bytesToB64(ct), keys, signature: bytesToB64(signature) };
 }
-export async function decryptMessage(payload, myUsername, myKemSecretB64, senderDsaPubB64) {
+export async function decryptMessage(payload, myUsername, myKemSecretB64, senderDsaPubB64, context = "") {
   const iv = b64ToBytes(payload.iv);
   const ct = b64ToBytes(payload.ciphertext);
-  const transcript = buildTranscript(enc.encode("msg"), iv, ct, payload.keys);
+  const transcript = buildTranscript(enc.encode("msg" + context), iv, ct, payload.keys);
   if (!ml_dsa65.verify(b64ToBytes(senderDsaPubB64), transcript, b64ToBytes(payload.signature))) {
     throw new Error("Signature verification failed — message not authentic");
   }
@@ -135,13 +138,13 @@ export async function decryptMessage(payload, myUsername, myKemSecretB64, sender
 }
 
 // ---- files ----
-export async function encryptFile(fileBytes, meta, recipients, senderDsaSecretB64) {
+export async function encryptFile(fileBytes, meta, recipients, senderDsaSecretB64, context = "") {
   const cekRaw = randomBytes(32);
   const cek = await importAesKey(cekRaw, ["encrypt"]);
   const iv = randomBytes(12);
   const cipherBytes = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, cek, fileBytes));
   const keys = await wrapCekForParties(cekRaw, recipients);
-  const metaBytes = enc.encode(JSON.stringify({ filename: meta.filename, mime: meta.mime, size: meta.size }));
+  const metaBytes = enc.encode(context + JSON.stringify({ filename: meta.filename, mime: meta.mime, size: meta.size }));
   const transcript = buildTranscript(metaBytes, iv, new Uint8Array(0), keys);
   const signature = ml_dsa65.sign(b64ToBytes(senderDsaSecretB64), transcript);
   const payload = {
@@ -150,13 +153,13 @@ export async function encryptFile(fileBytes, meta, recipients, senderDsaSecretB6
   };
   return { cipherBytes, payload };
 }
-export function verifyFilePayload(payload, senderDsaPubB64) {
-  const metaBytes = enc.encode(JSON.stringify({ filename: payload.filename, mime: payload.mime, size: payload.size }));
+export function verifyFilePayload(payload, senderDsaPubB64, context = "") {
+  const metaBytes = enc.encode(context + JSON.stringify({ filename: payload.filename, mime: payload.mime, size: payload.size }));
   const transcript = buildTranscript(metaBytes, b64ToBytes(payload.iv), new Uint8Array(0), payload.keys);
   return ml_dsa65.verify(b64ToBytes(senderDsaPubB64), transcript, b64ToBytes(payload.signature));
 }
-export async function decryptFile(cipherBytes, payload, myUsername, myKemSecretB64, senderDsaPubB64) {
-  if (!verifyFilePayload(payload, senderDsaPubB64)) {
+export async function decryptFile(cipherBytes, payload, myUsername, myKemSecretB64, senderDsaPubB64, context = "") {
+  if (!verifyFilePayload(payload, senderDsaPubB64, context)) {
     throw new Error("File signature verification failed — not authentic");
   }
   const entry = payload.keys[myUsername];
@@ -189,5 +192,27 @@ export async function openVault(vault, password) {
     return JSON.parse(dec.decode(pt));
   } catch (e) {
     throw new Error("Wrong password or corrupted vault");
+  }
+}
+
+// ---- encrypted chat backup ----
+// A password-sealed backup of arbitrary data (chat history, settings, …).
+// Same PBKDF2 + AES-256-GCM construction as the vault: without the password
+// the file is opaque ciphertext — it "cannot be stolen and opened".
+export async function sealBackup(data, password) {
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const key = await vaultKey(password, salt);
+  const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(JSON.stringify(data))));
+  return { app: "lattix", kind: "backup", v: 1, salt: bytesToB64(salt), iv: bytesToB64(iv), ciphertext: bytesToB64(ct) };
+}
+export async function openBackup(backup, password) {
+  if (!backup || backup.kind !== "backup") throw new Error("Not a Lattix backup file");
+  const key = await vaultKey(password, b64ToBytes(backup.salt));
+  try {
+    const pt = await subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(backup.iv) }, key, b64ToBytes(backup.ciphertext));
+    return JSON.parse(dec.decode(pt));
+  } catch (e) {
+    throw new Error("Wrong password or corrupted backup");
   }
 }

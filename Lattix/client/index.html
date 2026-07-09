@@ -32,7 +32,6 @@
         </div>
       </div>
 
-      <!-- Create account (shown to new users) -->
       <form id="create-form" class="auth-form" autocomplete="off" hidden>
         <h2 class="auth-title">Create your account</h2>
         <label>Username
@@ -50,7 +49,6 @@
         <p class="auth-switch">Already have a vault file? <a href="#" data-goto="import">Import it</a></p>
       </form>
 
-      <!-- Unlock (shown when this device already has a vault) -->
       <form id="unlock-form" class="auth-form" autocomplete="off" hidden>
         <h2 class="auth-title">Welcome back</h2>
         <label>Password
@@ -63,7 +61,6 @@
         <p class="auth-switch"><a href="#" data-goto="import">Import a vault</a> · <a href="#" data-goto="create">New account</a></p>
       </form>
 
-      <!-- Import a vault from another device -->
       <form id="import-form" class="auth-form" autocomplete="off" hidden>
         <h2 class="auth-title">Import a vault</h2>
         <label>Vault file
@@ -92,15 +89,17 @@
           <div id="self-name" class="self-name"></div>
           <div id="self-fingerprint" class="self-fp" title="Your identity fingerprint"></div>
         </div>
+        <div class="kali-badge" title="Kali Linux theme"></div>
         <div class="self-actions">
-          <button id="my-fp-btn" class="icon-btn" title="Show my safety code">🔑</button>
-          <button id="export-btn" class="icon-btn" title="Back up my account">⬇</button>
+          <button id="share-btn" class="icon-btn" title="Share my link / QR">🔗</button>
+          <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
           <button id="logout-btn" class="icon-btn" title="Log out">⏻</button>
         </div>
       </div>
 
-      <div class="sidebar-tools">
-        <button id="new-chat-btn" class="new-chat">＋ New conversation</button>
+      <div class="sidebar-tools" style="display:flex; gap:8px;">
+        <button id="new-chat-btn" class="new-chat" style="flex:1;">＋ New chat</button>
+        <button id="new-group-btn" class="new-chat" style="flex:1;">👥 New group</button>
       </div>
 
       <div id="contacts" class="contacts"></div>
@@ -122,7 +121,7 @@
           </svg>
         </div>
         <h2>Start chatting</h2>
-        <p>Pick a conversation on the left, or tap <strong>New conversation</strong> to find someone. Every message is end-to-end encrypted.</p>
+        <p>Pick a conversation on the left, or start a new chat or group. Every message and file is end-to-end encrypted.</p>
       </div>
 
       <div id="conversation" class="conversation" hidden>
@@ -133,7 +132,11 @@
             <div id="peer-name" class="peer-name"></div>
             <div id="peer-status" class="peer-status">offline</div>
           </div>
-          <button id="verify-peer-btn" class="ghost-btn" title="Compare safety codes">Verify</button>
+          <div class="header-actions">
+            <button id="verify-peer-btn" class="ghost-btn" title="Compare safety codes">Verify</button>
+            <button id="menu-btn" class="icon-btn" title="More">⋯</button>
+            <div id="chat-menu" class="menu" hidden></div>
+          </div>
         </header>
 
         <div id="messages" class="messages"></div>
@@ -168,6 +171,167 @@
       </div>
       <div id="fp-value" class="fp-value"></div>
       <p id="fp-hint" class="fine"></p>
+    </div>
+  </div>
+
+  <!-- New group -->
+  <div id="group-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>New group</h3>
+        <button id="group-close" class="icon-btn">✕</button>
+      </div>
+      <label>Group name
+        <input id="group-name" type="text" maxlength="64" placeholder="e.g. Family" />
+      </label>
+      <label style="margin-top:12px;">Icon (emoji, optional)
+        <input id="group-icon" type="text" maxlength="4" placeholder="👪" />
+      </label>
+      <label style="margin-top:12px;">Add members
+        <input id="group-member-search" type="text" placeholder="Search username…" />
+      </label>
+      <div id="group-member-results" class="search-results"></div>
+      <div id="group-members-chips" class="chips"></div>
+      <button id="group-create-btn" class="primary" style="margin-top:14px;">Create group</button>
+    </div>
+  </div>
+
+  <!-- Group info -->
+  <div id="groupinfo-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="gi-title">Group</h3>
+        <button id="gi-close" class="icon-btn">✕</button>
+      </div>
+      <div id="gi-members"></div>
+      <div id="gi-add" hidden>
+        <label style="margin-top:12px;">Add member
+          <input id="gi-search" type="text" placeholder="Search username…" />
+        </label>
+        <div id="gi-results" class="search-results"></div>
+      </div>
+      <div class="set-actions" style="margin-top:14px;">
+        <button id="gi-leave" class="btn danger">Leave group</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share link / QR -->
+  <div id="share-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Share my link</h3>
+        <button id="share-close" class="icon-btn">✕</button>
+      </div>
+      <div class="qr-wrap">
+        <canvas id="qr-canvas" class="qr-canvas" width="220" height="220"></canvas>
+        <div class="share-url">
+          <input id="share-url-input" type="text" readonly />
+          <button id="share-copy" class="btn">Copy</button>
+        </div>
+        <p class="fine">Others can scan this code or open the link to start a verified conversation with you.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Disappearing messages -->
+  <div id="ttl-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Disappearing messages</h3>
+        <button id="ttl-close" class="icon-btn">✕</button>
+      </div>
+      <p class="fine" style="margin-bottom:12px;">New messages in this chat are deleted for everyone after the chosen time.</p>
+      <div id="ttl-grid" class="ttl-grid"></div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div id="settings-modal" class="modal" hidden>
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <h3>Settings</h3>
+        <button id="settings-close" class="icon-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="set-section">
+          <h4>Profile</h4>
+          <div class="avatar-edit">
+            <div id="avatar-preview" class="avatar-preview"></div>
+            <div>
+              <div class="set-actions">
+                <button id="avatar-upload-btn" class="btn">Upload image</button>
+                <button id="avatar-remove-btn" class="btn">Remove</button>
+              </div>
+              <div class="set-sub">A profile image helps other users identify you.</div>
+            </div>
+          </div>
+          <input id="avatar-file" type="file" accept="image/*" hidden />
+        </div>
+
+        <div class="set-section">
+          <h4>Theme</h4>
+          <div id="theme-choices" class="choice-grid">
+            <button class="choice" data-theme="dark"><span class="swatch-mini" style="background:#16181f"></span>Dark</button>
+            <button class="choice" data-theme="light"><span class="swatch-mini" style="background:#ffffff"></span>Light</button>
+            <button class="choice" data-theme="monokai"><span class="swatch-mini" style="background:#272822"></span>Monokai</button>
+            <button class="choice" data-theme="kali"><span class="swatch-mini" style="background:#0f1626"></span>Kali</button>
+          </div>
+        </div>
+
+        <div class="set-section">
+          <h4>Chat color</h4>
+          <div id="chat-swatches" class="swatches">
+            <div class="swatch" data-c="default" title="Default"></div>
+            <div class="swatch" data-c="red" title="Red"></div>
+            <div class="swatch" data-c="green" title="Green"></div>
+            <div class="swatch" data-c="blue" title="Blue"></div>
+            <div class="swatch" data-c="pink" title="Pink"></div>
+          </div>
+        </div>
+
+        <div class="set-section">
+          <h4>Notifications</h4>
+          <div class="set-row">
+            <div><div class="set-label">Message tones</div><div class="set-sub">Play a sound when messages are sent &amp; received.</div></div>
+            <label class="switch"><input id="toggle-sounds" type="checkbox" /><span class="track"></span></label>
+          </div>
+          <div class="set-row">
+            <div><div class="set-label">Desktop alerts</div><div class="set-sub">Show a notification for incoming messages.</div></div>
+            <label class="switch"><input id="toggle-notify" type="checkbox" /><span class="track"></span></label>
+          </div>
+        </div>
+
+        <div class="set-section" id="server-section" hidden>
+          <h4>Relay server</h4>
+          <label>Server URL
+            <input id="server-url" type="text" placeholder="http://localhost:8000" />
+          </label>
+          <div class="set-actions" style="margin-top:10px;">
+            <button id="server-save" class="btn">Save &amp; reload</button>
+          </div>
+        </div>
+
+        <div class="set-section">
+          <h4>Blocked users</h4>
+          <div id="blocked-list" class="blocked-list"></div>
+        </div>
+
+        <div class="set-section">
+          <h4>Data</h4>
+          <div class="set-actions">
+            <button id="export-json-btn" class="btn">Export chat history (JSON)</button>
+            <button id="backup-btn" class="btn">Encrypted backup</button>
+            <button id="restore-btn" class="btn">Restore backup</button>
+            <button id="export-vault-btn" class="btn">Export vault</button>
+          </div>
+          <input id="restore-file" type="file" accept="application/json,.json" hidden />
+          <div class="set-actions" style="margin-top:14px;">
+            <button id="delete-data-btn" class="btn danger">Delete application data…</button>
+          </div>
+          <div class="set-sub" style="margin-top:8px;">Deletes this device's keys, chats, and settings, resetting Lattix to a fresh install.</div>
+        </div>
+      </div>
     </div>
   </div>
 

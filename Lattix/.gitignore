@@ -14,17 +14,19 @@ data/*.db-shm
 scripts/node_modules/
 scripts/package-lock.json
 
-# Windows installer build artifacts
+# Installer build artifacts (PyInstaller + per-OS packaging)
 .venv-build/
 build/
 dist/
 installer/Output/
+installer/linux/Output/
+installer/macos/Output/
 *.exe
+*.run
+*.dmg
 
 # OS / editors
 .DS_Store
 .idea/
 .vscode/
 *.log
-installer/linux/Output/
-*.run

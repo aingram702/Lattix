@@ -33,6 +33,9 @@ def _data_dir() -> str:
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") \
             or os.path.expanduser("~")
         path = os.path.join(base, "Lattix")
+    elif sys.platform == "darwin":
+        path = os.path.join(os.path.expanduser("~"), "Library",
+                            "Application Support", "Lattix")
     else:
         base = os.environ.get("XDG_DATA_HOME") \
             or os.path.join(os.path.expanduser("~"), ".local", "share")

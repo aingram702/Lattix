@@ -29,9 +29,14 @@ def _resource_base() -> str:
 
 
 def _data_dir() -> str:
-    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") \
-        or os.path.expanduser("~")
-    path = os.path.join(base, "Lattix")
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") \
+            or os.path.expanduser("~")
+        path = os.path.join(base, "Lattix")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") \
+            or os.path.join(os.path.expanduser("~"), ".local", "share")
+        path = os.path.join(base, "lattix")
     os.makedirs(path, exist_ok=True)
     return path
 

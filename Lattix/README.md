@@ -71,14 +71,18 @@ to the relay you configure.
 
 ---
 
-## Windows installer
+## Standalone installers
 
-Prefer a double-click install with no Python setup? Build a standalone
-**`LattixSetup.exe`** (PyInstaller + Inno Setup) — see
-[`installer/`](installer/README.md). The easiest path needs no Windows machine
-of your own: the bundled GitHub Actions workflow builds the installer on a
-Windows runner and uploads it as an artifact (and attaches it to a release when
-you push a `v*` tag).
+Prefer a double-click install with no Python setup? Build a standalone installer
+that bundles everything — see [`installer/`](installer/README.md):
+
+- **Windows** → `LattixSetup.exe` (PyInstaller + Inno Setup)
+- **Linux** → `Lattix-<ver>-<arch>.run` (self-extracting installer with app-menu
+  integration)
+
+The easiest path needs no build machine of your own: the bundled GitHub Actions
+workflows build each installer on the matching runner and upload it as an
+artifact (and attach it to a release when you push a `v*` tag).
 
 ---
 

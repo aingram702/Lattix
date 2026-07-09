@@ -26,3 +26,5 @@ installer/Output/
 .idea/
 .vscode/
 *.log
+installer/linux/Output/
+*.run

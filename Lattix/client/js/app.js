@@ -71,20 +71,36 @@ const storeVault = (vault) => localStorage.setItem(VAULT_KEY, JSON.stringify(vau
 function showAuth() {
   $("#app-screen").hidden = true;
   $("#auth-screen").hidden = false;
-  const hasVault = !!loadStoredVault();
-  switchAuthTab(hasVault ? "unlock" : "create");
-  $$(".auth-tab").forEach((tab) =>
-    (tab.onclick = () => switchAuthTab(tab.dataset.tab))
-  );
+  document.body.classList.remove("chat-open");
+
+  // Inline show/hide toggles for every password field.
+  $$(".pw-toggle").forEach((btn) => {
+    btn.onclick = () => {
+      const input = document.getElementById(btn.dataset.target);
+      const reveal = input.type === "password";
+      input.type = reveal ? "text" : "password";
+      btn.textContent = reveal ? "Hide" : "Show";
+    };
+  });
+
+  // Text links that switch between the create / unlock / import views.
+  $$("[data-goto]").forEach((a) => {
+    a.onclick = (e) => { e.preventDefault(); switchAuthView(a.dataset.goto); };
+  });
 
   $("#create-form").onsubmit = onCreate;
   $("#unlock-form").onsubmit = onUnlock;
   $("#import-form").onsubmit = onImport;
+
+  // Returning users land on Unlock; new users land on Create.
+  switchAuthView(loadStoredVault() ? "unlock" : "create");
 }
 
-function switchAuthTab(tab) {
-  $$(".auth-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
-  $$(".auth-panel").forEach((p) => (p.hidden = p.dataset.panel !== tab));
+function switchAuthView(name) {
+  $$(".auth-form").forEach((f) => (f.hidden = f.id !== `${name}-form`));
+  const firstField = { create: "#create-username", unlock: "#unlock-password", import: "#import-file" }[name];
+  const node = firstField && $(firstField);
+  if (node) setTimeout(() => node.focus(), 0);
 }
 
 async function onCreate(e) {
@@ -92,10 +108,8 @@ async function onCreate(e) {
   const btn = $("#create-form button[type=submit]");
   const username = $("#create-username").value.trim().toLowerCase();
   const password = $("#create-password").value;
-  const confirm = $("#create-confirm").value;
   if (password.length < 8) return toast("Password must be at least 8 characters", "error");
-  if (password !== confirm) return toast("Passwords do not match", "error");
-  btn.disabled = true; btn.textContent = "Generating quantum-resistant keys…";
+  btn.disabled = true; btn.textContent = "Setting up your account…";
   try {
     const identity = await C.generateIdentity();
     identity.username = username;
@@ -122,7 +136,7 @@ async function onUnlock(e) {
   const btn = $("#unlock-form button[type=submit]");
   const password = $("#unlock-password").value;
   const vault = loadStoredVault();
-  if (!vault) return switchAuthTab("create");
+  if (!vault) return switchAuthView("create");
   btn.disabled = true; btn.textContent = "Unlocking…";
   try {
     const identity = await C.openVault(vault, password);
@@ -218,6 +232,13 @@ function wireAppEvents() {
   };
   $("#my-fp-btn").onclick = () => openFingerprint(state.identity.username);
 
+  // On narrow screens the conversation covers the list; go back to the list.
+  $("#back-btn").onclick = () => {
+    document.body.classList.remove("chat-open");
+    state.current = null;
+    renderContacts();
+  };
+
   $("#new-chat-btn").onclick = () => openUserSearch();
   $("#search-close").onclick = () => ($("#search-modal").hidden = true);
   $("#fp-close").onclick = () => ($("#fp-modal").hidden = true);
@@ -293,6 +314,7 @@ async function selectPeer(username) {
   ensureThread(username).unread = 0;
   $("#empty-state").hidden = true;
   $("#conversation").hidden = false;
+  document.body.classList.add("chat-open");  // reveal the conversation pane on mobile
   const peer = await getPeerKeys(username).catch(() => null);
   $("#peer-name").textContent = username;
   $("#peer-avatar").style.background = avatarColor(username);

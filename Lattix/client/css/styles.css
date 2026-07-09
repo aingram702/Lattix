@@ -19,6 +19,11 @@
 }
 
 * { box-sizing: border-box; }
+/* The whole app shows/hides screens and modals via the `hidden` attribute.
+   Class rules like `.modal { display: grid }` would otherwise override the
+   UA `[hidden] { display: none }` rule, leaving "hidden" panels (e.g. the
+   fingerprint modal) visible on load — so make `hidden` authoritative. */
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
@@ -33,39 +38,41 @@ button { font-family: inherit; cursor: pointer; }
 input, textarea { font-family: inherit; }
 code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-size: .85em; }
 
-/* ---------------- Auth ---------------- */
+/* ---------------- Welcome / Auth ---------------- */
 .auth-screen {
   min-height: 100vh; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 22px; padding: 24px;
+  align-items: center; justify-content: center; padding: 24px;
 }
-.auth-card {
-  width: 100%; max-width: 400px; background: var(--surface);
-  border: 1px solid var(--border); border-radius: 20px; padding: 28px;
-  box-shadow: var(--shadow);
-}
-.brand { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+.auth-inner { width: 100%; max-width: 360px; }
+.brand { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
 .brand-mark { color: var(--accent); display: grid; place-items: center;
-  width: 54px; height: 54px; background: var(--accent-dim); border-radius: 15px; }
-.brand h1 { margin: 0; font-size: 26px; letter-spacing: .5px; }
-.tagline { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  width: 48px; height: 48px; background: var(--accent-dim); border-radius: 14px; }
+.brand h1 { margin: 0; font-size: 27px; letter-spacing: .5px; }
+.tagline { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
 
-.auth-tabs { display: flex; gap: 6px; background: var(--bg-2); padding: 5px;
-  border-radius: 12px; margin-bottom: 20px; border: 1px solid var(--border); }
-.auth-tab { flex: 1; padding: 9px; border: 0; border-radius: 8px; background: transparent;
-  color: var(--muted); font-size: 14px; font-weight: 600; transition: .15s; }
-.auth-tab.active { background: var(--surface-2); color: var(--text);
-  box-shadow: 0 1px 0 var(--border-2); }
-
-.auth-panel { display: flex; flex-direction: column; gap: 14px; }
+.auth-form { display: flex; flex-direction: column; gap: 14px; }
+.auth-title { margin: 0 0 2px; font-size: 19px; font-weight: 700; }
 label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: var(--muted); }
 input, textarea, .modal-input {
   background: var(--bg-2); border: 1px solid var(--border-2); color: var(--text);
   padding: 12px 13px; border-radius: 10px; font-size: 14px; outline: none; transition: .15s;
+  width: 100%;
 }
 input:focus, textarea:focus, .modal-input:focus {
   border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim);
 }
 input[type=file] { padding: 10px; }
+
+/* password field with an inline show/hide toggle */
+.pw-field { position: relative; display: flex; }
+.pw-field input { padding-right: 62px; }
+.pw-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  border: 0; background: transparent; color: var(--accent-2);
+  font-size: 12px; font-weight: 600; padding: 6px 8px; border-radius: 7px;
+}
+.pw-toggle:hover { background: var(--surface-2); }
+
 .primary {
   margin-top: 4px; padding: 12px; border: 0; border-radius: 10px; font-size: 15px; font-weight: 600;
   color: white; background: linear-gradient(135deg, var(--accent), #6b7bff);
@@ -74,7 +81,10 @@ input[type=file] { padding: 10px; }
 .primary:hover { filter: brightness(1.07); }
 .primary:disabled { opacity: .6; cursor: default; }
 .fine { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 6px 0 0; }
-.auth-foot { color: var(--muted); font-size: 12px; letter-spacing: .3px; }
+.auth-switch { color: var(--muted); font-size: 13px; margin: 2px 0 0; text-align: center; }
+.auth-switch a { color: var(--accent-2); text-decoration: none; font-weight: 600; }
+.auth-switch a:hover { text-decoration: underline; }
+.auth-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 26px 0 0; text-align: center; }
 
 /* ---------------- App layout ---------------- */
 .app-screen { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
@@ -153,6 +163,7 @@ input[type=file] { padding: 10px; }
   border-bottom: 1px solid var(--border); background: var(--surface);
 }
 .chat-peer { flex: 1; min-width: 0; }
+#back-btn { display: none; font-size: 26px; line-height: 1; }
 .peer-name { font-weight: 700; font-size: 15px; }
 .peer-status { font-size: 12px; color: var(--muted); }
 .peer-status.online { color: var(--teal); }
@@ -242,6 +253,10 @@ input[type=file] { padding: 10px; }
 
 /* ---------------- Responsive ---------------- */
 @media (max-width: 720px) {
+  /* One pane at a time: the contact list, or an open conversation. */
   .app-screen { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
+  .main { display: none; }
+  body.chat-open .sidebar { display: none; }
+  body.chat-open .main { display: flex; }
+  #back-btn { display: grid; }
 }

@@ -10,12 +10,12 @@
 <body>
   <div id="toasts"></div>
 
-  <!-- ===================== AUTH SCREEN ===================== -->
+  <!-- ===================== WELCOME / AUTH ===================== -->
   <section id="auth-screen" class="auth-screen">
-    <div class="auth-card">
+    <div class="auth-inner">
       <div class="brand">
         <div class="brand-mark">
-          <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
             <path d="M16 3l11 6.5v13L16 29 5 22.5v-13z" fill="none" stroke="currentColor" stroke-width="2"/>
             <circle cx="16" cy="16" r="3" fill="currentColor"/>
             <circle cx="16" cy="3" r="1.6" fill="currentColor"/>
@@ -28,52 +28,59 @@
         </div>
         <div>
           <h1>Lattix</h1>
-          <p class="tagline">Quantum-resistant chat &amp; file sharing</p>
+          <p class="tagline">Private, quantum-resistant messaging</p>
         </div>
       </div>
 
-      <div class="auth-tabs">
-        <button class="auth-tab" data-tab="create">Create</button>
-        <button class="auth-tab" data-tab="unlock">Unlock</button>
-        <button class="auth-tab" data-tab="import">Import</button>
-      </div>
-
-      <form id="create-form" class="auth-panel" data-panel="create" autocomplete="off">
+      <!-- Create account (shown to new users) -->
+      <form id="create-form" class="auth-form" autocomplete="off" hidden>
+        <h2 class="auth-title">Create your account</h2>
         <label>Username
           <input id="create-username" type="text" required minlength="3" maxlength="32"
                  pattern="[a-zA-Z0-9_.\-]{3,32}" placeholder="e.g. ada" />
         </label>
         <label>Password
-          <input id="create-password" type="password" required minlength="8"
-                 placeholder="Protects your keys on this device" />
-        </label>
-        <label>Confirm password
-          <input id="create-confirm" type="password" required minlength="8" placeholder="Repeat password" />
+          <div class="pw-field">
+            <input id="create-password" type="password" required minlength="8"
+                   placeholder="At least 8 characters" />
+            <button type="button" class="pw-toggle" data-target="create-password">Show</button>
+          </div>
         </label>
         <button type="submit" class="primary">Create account</button>
-        <p class="fine">Your ML-KEM &amp; ML-DSA keys are generated locally and encrypted with your password. True zero-knowledge: the server only ever sees ciphertext.</p>
+        <p class="auth-switch">Already have a vault file? <a href="#" data-goto="import">Import it</a></p>
       </form>
 
-      <form id="unlock-form" class="auth-panel" data-panel="unlock" hidden autocomplete="off">
+      <!-- Unlock (shown when this device already has a vault) -->
+      <form id="unlock-form" class="auth-form" autocomplete="off" hidden>
+        <h2 class="auth-title">Welcome back</h2>
         <label>Password
-          <input id="unlock-password" type="password" required placeholder="Unlock your local vault" />
+          <div class="pw-field">
+            <input id="unlock-password" type="password" required placeholder="Your password" />
+            <button type="button" class="pw-toggle" data-target="unlock-password">Show</button>
+          </div>
         </label>
         <button type="submit" class="primary">Unlock</button>
-        <p class="fine">This device already holds an encrypted identity vault.</p>
+        <p class="auth-switch"><a href="#" data-goto="import">Import a vault</a> · <a href="#" data-goto="create">New account</a></p>
       </form>
 
-      <form id="import-form" class="auth-panel" data-panel="import" hidden autocomplete="off">
+      <!-- Import a vault from another device -->
+      <form id="import-form" class="auth-form" autocomplete="off" hidden>
+        <h2 class="auth-title">Import a vault</h2>
         <label>Vault file
           <input id="import-file" type="file" accept="application/json,.json" required />
         </label>
         <label>Password
-          <input id="import-password" type="password" required placeholder="Vault password" />
+          <div class="pw-field">
+            <input id="import-password" type="password" required placeholder="Vault password" />
+            <button type="button" class="pw-toggle" data-target="import-password">Show</button>
+          </div>
         </label>
         <button type="submit" class="primary">Import vault</button>
-        <p class="fine">Move your identity to a new device using an exported <code>.vault.json</code> file.</p>
+        <p class="auth-switch"><a href="#" data-goto="create">Back</a></p>
       </form>
+
+      <p class="auth-note">Your keys are generated on this device and encrypted with your password. The server only ever sees ciphertext.</p>
     </div>
-    <footer class="auth-foot">ML-KEM-768 · ML-DSA-65 · AES-256-GCM — all client-side</footer>
   </section>
 
   <!-- ===================== APP SCREEN ===================== -->
@@ -86,8 +93,8 @@
           <div id="self-fingerprint" class="self-fp" title="Your identity fingerprint"></div>
         </div>
         <div class="self-actions">
-          <button id="my-fp-btn" class="icon-btn" title="Show my fingerprint">🔑</button>
-          <button id="export-btn" class="icon-btn" title="Export encrypted vault">⬇</button>
+          <button id="my-fp-btn" class="icon-btn" title="Show my safety code">🔑</button>
+          <button id="export-btn" class="icon-btn" title="Back up my account">⬇</button>
           <button id="logout-btn" class="icon-btn" title="Log out">⏻</button>
         </div>
       </div>
@@ -107,33 +114,34 @@
     <main class="main">
       <div id="empty-state" class="empty-state">
         <div class="empty-lattice">
-          <svg viewBox="0 0 120 120" width="120" height="120" aria-hidden="true">
+          <svg viewBox="0 0 120 120" width="110" height="110" aria-hidden="true">
             <g fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5">
               <path d="M60 8l45 26v52L60 112 15 86V34z"/>
               <path d="M60 8v104M15 34l90 52M105 34L15 86"/>
             </g>
           </svg>
         </div>
-        <h2>Welcome to Lattix</h2>
-        <p>Select a conversation or start a new one. Every message and file is end-to-end encrypted with post-quantum cryptography.</p>
+        <h2>Start chatting</h2>
+        <p>Pick a conversation on the left, or tap <strong>New conversation</strong> to find someone. Every message is end-to-end encrypted.</p>
       </div>
 
       <div id="conversation" class="conversation" hidden>
         <header class="chat-header">
+          <button id="back-btn" class="icon-btn" title="Back">‹</button>
           <div id="peer-avatar" class="avatar"></div>
           <div class="chat-peer">
             <div id="peer-name" class="peer-name"></div>
             <div id="peer-status" class="peer-status">offline</div>
           </div>
-          <button id="verify-peer-btn" class="ghost-btn" title="Verify identity fingerprint">Verify keys</button>
+          <button id="verify-peer-btn" class="ghost-btn" title="Compare safety codes">Verify</button>
         </header>
 
         <div id="messages" class="messages"></div>
 
         <div class="composer">
-          <button id="attach-btn" class="icon-btn" title="Attach encrypted file">📎</button>
+          <button id="attach-btn" class="icon-btn" title="Attach an encrypted file">📎</button>
           <input id="file-input" type="file" hidden />
-          <textarea id="msg-input" rows="1" placeholder="Write an encrypted message…"></textarea>
+          <textarea id="msg-input" rows="1" placeholder="Write a message…"></textarea>
           <button id="send-btn" class="send-btn" title="Send">➤</button>
         </div>
       </div>
@@ -144,10 +152,10 @@
   <div id="search-modal" class="modal" hidden>
     <div class="modal-card">
       <div class="modal-head">
-        <h3>Start a conversation</h3>
+        <h3>New conversation</h3>
         <button id="search-close" class="icon-btn">✕</button>
       </div>
-      <input id="search-input" type="text" class="modal-input" placeholder="Search username…" />
+      <input id="search-input" type="text" class="modal-input" placeholder="Search by username…" />
       <div id="search-results" class="search-results"></div>
     </div>
   </div>
@@ -155,7 +163,7 @@
   <div id="fp-modal" class="modal" hidden>
     <div class="modal-card">
       <div class="modal-head">
-        <h3 id="fp-title">Fingerprint</h3>
+        <h3 id="fp-title">Safety code</h3>
         <button id="fp-close" class="icon-btn">✕</button>
       </div>
       <div id="fp-value" class="fp-value"></div>

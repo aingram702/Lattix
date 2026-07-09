@@ -71,6 +71,17 @@ to the relay you configure.
 
 ---
 
+## Windows installer
+
+Prefer a double-click install with no Python setup? Build a standalone
+**`LattixSetup.exe`** (PyInstaller + Inno Setup) — see
+[`installer/`](installer/README.md). The easiest path needs no Windows machine
+of your own: the bundled GitHub Actions workflow builds the installer on a
+Windows runner and uploads it as an artifact (and attaches it to a release when
+you push a `v*` tag).
+
+---
+
 ## Quick start
 
 Requires **Python 3.10+**.

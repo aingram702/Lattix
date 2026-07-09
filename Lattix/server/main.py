@@ -49,7 +49,8 @@ from .models import (
 # --------------------------------------------------------------------------- #
 # Config
 # --------------------------------------------------------------------------- #
-CLIENT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "client")
+CLIENT_DIR = os.environ.get("LATTIX_CLIENT_DIR") or \
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "client")
 MAX_FILE_BYTES = int(os.environ.get("LATTIX_MAX_FILE_MB", "50")) * 1024 * 1024
 FILE_READ_CHUNK = 1024 * 1024
 TOKEN_TTL = 60 * 60 * 12  # 12 hours

@@ -9,7 +9,7 @@ End-to-end encrypted messaging built entirely on NIST post-quantum cryptography 
 [![Linux installer](https://github.com/aingram702/Lattix/actions/workflows/build-linux-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-linux-installer.yml)
 [![macOS installer](https://github.com/aingram702/Lattix/actions/workflows/build-macos-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-macos-installer.yml)
 
-![Lattix conversation](docs/screenshots/app-dark.png)
+![Lattix conversation](lattix/docs/screenshots/app-dark.png)
 
 </div>
 
@@ -98,7 +98,7 @@ Wrapping for the sender too means you can read your own sent history across devi
 
 | Kali theme | Settings | Share / QR |
 |------------|----------|------------|
-| ![Kali theme](docs/screenshots/app-kali.png) | ![Settings](docs/screenshots/settings.png) | ![Share and QR](docs/screenshots/share-qr.png) |
+| ![Kali theme](lattix/docs/screenshots/app-kali.png) | ![Settings](lattix/docs/screenshots/settings.png) | ![Share and QR](lattix/docs/screenshots/share-qr.png) |
 
 ---
 
@@ -114,7 +114,7 @@ Double-click installers that bundle everything — **no Python needed on the tar
 | **macOS** | `Lattix-<ver>-<arch>.dmg` | `installer/macos/build.sh` |
 | **Linux** | `Lattix-<ver>-<arch>.run` | `installer/linux/build.sh` |
 
-See [`installer/README.md`](installer/README.md) for details. Launching Lattix starts a local relay on `http://localhost:8000` and opens it in your browser.
+See [`installer/README.md`](lattix/installer/README.md) for details. Launching Lattix starts a local relay on `http://localhost:8000` and opens it in your browser.
 
 ### Run from source
 

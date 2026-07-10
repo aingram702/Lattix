@@ -84,7 +84,30 @@ Wrapping for the sender too means you can read your own sent history across devi
 |------------|----------|------------|
 | ![Kali theme](Lattix/docs/screenshots/app-kali.png) | ![Settings](Lattix/docs/screenshots/settings.png) | ![Share and QR](Lattix/docs/screenshots/share-qr.png) |
 
----
+**Security & privacy**
+- ✍️ **Signature verification** on every message — 🔒 marks authenticated messages, ⚠ marks failures.
+- 🧾 **Key-fingerprint (safety-code) verification** — compare fingerprints out-of-band to defeat man-in-the-middle / key-substitution attacks.
+- 🔗 **QR / link sharing** — a scannable QR code and share URL (offline QR generator, no CDN) that opens a *verified* conversation with you.
+- 🚫 **Block users** — locally hide and ignore messages from specific accounts.
+- 🗄️ **Encrypted local vault** — your private keys are sealed with your password (PBKDF2 + AES-GCM) and never leave the device.
+
+**Personalization**
+- 🎨 **Four themes** — Light, Dark, Monokai, and a dark **Kali Linux** theme with the Kali dragon embedded.
+- 🖌️ **Chat colors** — recolor your chat bubbles (red / green / blue / pink).
+- 🖼️ **Profile images** — set an avatar so contacts can identify you (downscaled on-device).
+
+**Data & portability**
+- 📤 **Export chat history** as machine-readable JSON.
+- 💾 **Encrypted backups** — password-sealed (PBKDF2 + AES-GCM) backup files that are useless without your password, plus one-click restore.
+- 🧳 **Portable identity** — export/import your encrypted `.vault.json` to move to a new device.
+- 🧨 **Delete application data** — one button resets the device (and account) to a fresh install.
+
+**Platforms**
+- 🖥️ **Standalone installers** for **Windows, macOS, and Linux** — bundle a Python runtime, no dependencies to install.
+- 🧩 **Chrome extension** — the same client ships as an MV3 extension.
+- 🌐 **Zero frontend dependencies** — no external CDNs, works offline.
+
+## Screenshots
 
 ## Get started
 

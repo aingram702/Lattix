@@ -27,6 +27,7 @@ Every message and file is encrypted **in your browser** before it ever touches t
   - [Install (Windows / macOS / Linux)](#install-a-standalone-app)
   - [Run from source](#run-from-source)
   - [Chrome extension](#chrome-extension)
+- [Host it (reachable from anywhere)](#host-it-reachable-from-anywhere)
 - [Trust model](#trust-model)
 - [Project layout](#project-layout)
 - [Development](#development)
@@ -148,6 +149,18 @@ The `client/` directory doubles as an unpacked MV3 extension:
 3. Click the Lattix toolbar icon, then open **Settings → Relay server** and point it at your server URL (default `http://localhost:8000`).
 
 All crypto still runs locally; the extension only talks to the relay you configure.
+
+---
+
+## Host it (reachable from anywhere)
+
+To run Lattix as a public service over HTTPS so anyone can reach it, see **[DEPLOYMENT.md](DEPLOYMENT.md)**. It covers:
+
+- A **one-command Docker Compose** setup with automatic HTTPS (Caddy + Let's Encrypt) and WSS for your own server or VPS.
+- Managed platforms — **Render**, **Fly.io**, **Railway** — with persistent-volume and health-check config.
+- A production [`Dockerfile`](Dockerfile) and a `docker-image` CI workflow that publishes a ready-to-deploy image to GHCR.
+
+HTTPS is **required** (browser crypto needs a secure context), and the relay runs as a **single instance** — sessions and real-time delivery are kept in memory, which is ideal for a family or team but not horizontally scaled.
 
 ---
 

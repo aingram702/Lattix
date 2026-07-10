@@ -1,0 +1,15 @@
+# Caddy reverse proxy for Lattix.
+#
+# Automatic HTTPS (Let's Encrypt) for $LATTIX_DOMAIN, and WebSocket upgrades are
+# proxied transparently — no extra config needed for /ws. To set an ACME
+# contact email, add a global block:  { email you@example.com }
+
+{$LATTIX_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy lattix:8000
+
+	# Uploaded blobs can be up to LATTIX_MAX_FILE_MB; raise if you increase it.
+	request_body {
+		max_size 60MB
+	}
+}

@@ -25,6 +25,9 @@ installer/macos/Output/
 *.run
 *.dmg
 
+# Deploy secrets (domain/env for docker compose)
+deploy/.env
+
 # OS / editors
 .DS_Store
 .idea/

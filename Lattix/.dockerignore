@@ -1,0 +1,32 @@
+# Keep the build context small and free of build artifacts / secrets.
+.git
+.gitignore
+.venv/
+.venv-build/
+__pycache__/
+*.py[cod]
+*.log
+
+# Local runtime data (never ship a database into the image)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Installer / packaging outputs (not needed at runtime)
+installer/build/
+installer/dist/
+installer/Output/
+installer/linux/Output/
+build/
+dist/
+*.run
+*.exe
+
+# Node tooling used only to rebuild the vendored crypto bundle
+scripts/node_modules/
+scripts/package-lock.json
+
+# Docs / deploy helpers not needed inside the image
+DEPLOYMENT.md
+deploy/

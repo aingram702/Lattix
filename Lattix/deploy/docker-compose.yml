@@ -1,0 +1,51 @@
+# Turnkey Lattix deployment: the relay + Caddy for automatic HTTPS.
+#
+# Caddy is the only container exposed to the internet (ports 80/443) and it
+# obtains + renews a Let's Encrypt certificate for your domain automatically.
+# The Lattix relay is reachable ONLY on the internal Docker network, so trusting
+# forwarded client IPs is safe.
+#
+# Setup:
+#   1. Point your domain's DNS A/AAAA record at this server's public IP.
+#   2. Create a .env file next to this one:  LATTIX_DOMAIN=chat.example.com
+#   3. docker compose up -d --build
+#
+# See ../DEPLOYMENT.md for the full walkthrough.
+
+services:
+  lattix:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: lattix:latest
+    environment:
+      LATTIX_DB: /data/lattix.db
+      # Only Caddy can reach this container, so trust its forwarded client IPs.
+      LATTIX_FORWARDED_ALLOW_IPS: "*"
+      LATTIX_MAX_FILE_MB: "50"
+    volumes:
+      - lattix-data:/data
+    expose:
+      - "8000"          # internal only — NOT published to the host
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - lattix
+    environment:
+      LATTIX_DOMAIN: ${LATTIX_DOMAIN:?set LATTIX_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  lattix-data:
+  caddy-data:
+  caddy-config:

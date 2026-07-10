@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import os
 import webbrowser
 import threading
 import time
@@ -26,8 +27,8 @@ def _open_browser(url: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Lattix server")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", default=os.environ.get("LATTIX_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
     parser.add_argument("--reload", action="store_true", help="auto-reload on code changes")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
     args = parser.parse_args()

@@ -59,7 +59,25 @@ PBKDF2_ITERS = 200_000
 # login timing doesn't reveal whether a username exists.
 _DUMMY_LOGIN_SALT = secrets.token_hex(16)
 
-app = FastAPI(title="Lattix", version="1.1.0", docs_url="/api/docs")
+# API docs (/api/docs) can be disabled in production by setting LATTIX_DOCS_URL="".
+_DOCS_URL = os.environ.get("LATTIX_DOCS_URL", "/api/docs") or None
+
+app = FastAPI(title="Lattix", version="1.1.0", docs_url=_DOCS_URL)
+
+# Optional CORS — only needed if the client is served from a DIFFERENT origin
+# than the API (the bundled web app is same-origin and needs none). Set
+# LATTIX_CORS_ORIGINS to a comma-separated allowlist, e.g.
+# "https://chat.example.com".
+_cors_origins = [o.strip() for o in os.environ.get("LATTIX_CORS_ORIGINS", "").split(",") if o.strip()]
+if _cors_origins:
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        allow_credentials=False,
+    )
 
 
 @app.on_event("startup")
@@ -488,6 +506,14 @@ async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
     finally:
         manager.disconnect(username, ws)
         await manager.presence(username, False)
+
+
+# --------------------------------------------------------------------------- #
+# Health check (for load balancers / hosting platform probes)
+# --------------------------------------------------------------------------- #
+@app.get("/api/health")
+def health() -> dict:
+    return {"status": "ok", "version": app.version}
 
 
 # --------------------------------------------------------------------------- #

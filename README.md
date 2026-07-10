@@ -9,29 +9,13 @@ End-to-end encrypted messaging built entirely on NIST post-quantum cryptography 
 [![Linux installer](https://github.com/aingram702/Lattix/actions/workflows/build-linux-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-linux-installer.yml)
 [![macOS installer](https://github.com/aingram702/Lattix/actions/workflows/build-macos-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-macos-installer.yml)
 
-![Lattix conversation](docs/screenshots/app-dark.png)
+![Lattix conversation](Lattix/docs/screenshots/app-dark.png)
 
 </div>
 
 Every message and file is encrypted **in your browser** before it ever touches the network. The server is a **zero-knowledge relay**: it stores public keys, opaque ciphertext, and encrypted blobs it cannot read. It can't read your messages, and it can't forge them — recipients verify a post-quantum signature on every message.
 
----
-
-## Table of contents
-
-- [Cryptography](#cryptography)
-- [How a message is protected](#how-a-message-is-protected)
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Get started](#get-started)
-  - [Install (Windows / macOS / Linux)](#install-a-standalone-app)
-  - [Run from source](#run-from-source)
-  - [Chrome extension](#chrome-extension)
-- [Trust model](#trust-model)
-- [Project layout](#project-layout)
-- [Development](#development)
-- [Security notes & limitations](#security-notes--limitations)
-- [License](#license)
+> **Repository layout:** the application lives in the [`Lattix/`](Lattix/) subdirectory, which has its own [detailed README](Lattix/README.md). This page is a top-level overview; file paths below are given relative to the repository root.
 
 ---
 
@@ -45,7 +29,7 @@ Every message and file is encrypted **in your browser** before it ever touches t
 | Key derivation | **HKDF-SHA-256** | RFC 5869 |
 | Vault & encrypted backups | **PBKDF2-SHA-256** (250k iters) + AES-256-GCM | — |
 
-AES-256 remains safe against quantum adversaries — Grover's algorithm only halves its effective strength to 128 bits — so the whole construction is post-quantum secure. The PQC primitives come from the audited [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) library, vendored as a single offline bundle (`client/vendor/lattix-pqc.js`) — **no CDNs, works offline**.
+AES-256 remains safe against quantum adversaries — Grover's algorithm only halves its effective strength to 128 bits — so the whole construction is post-quantum secure. The PQC primitives come from the audited [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) library, vendored as a single offline bundle (`Lattix/client/vendor/lattix-pqc.js`) — **no CDNs, works offline**.
 
 ## How a message is protected
 
@@ -98,23 +82,46 @@ Wrapping for the sender too means you can read your own sent history across devi
 
 | Kali theme | Settings | Share / QR |
 |------------|----------|------------|
-| ![Kali theme](docs/screenshots/app-kali.png) | ![Settings](docs/screenshots/settings.png) | ![Share and QR](docs/screenshots/share-qr.png) |
+| ![Kali theme](Lattix/docs/screenshots/app-kali.png) | ![Settings](Lattix/docs/screenshots/settings.png) | ![Share and QR](Lattix/docs/screenshots/share-qr.png) |
 
---
+**Security & privacy**
+- ✍️ **Signature verification** on every message — 🔒 marks authenticated messages, ⚠ marks failures.
+- 🧾 **Key-fingerprint (safety-code) verification** — compare fingerprints out-of-band to defeat man-in-the-middle / key-substitution attacks.
+- 🔗 **QR / link sharing** — a scannable QR code and share URL (offline QR generator, no CDN) that opens a *verified* conversation with you.
+- 🚫 **Block users** — locally hide and ignore messages from specific accounts.
+- 🗄️ **Encrypted local vault** — your private keys are sealed with your password (PBKDF2 + AES-GCM) and never leave the device.
+
+**Personalization**
+- 🎨 **Four themes** — Light, Dark, Monokai, and a dark **Kali Linux** theme with the Kali dragon embedded.
+- 🖌️ **Chat colors** — recolor your chat bubbles (red / green / blue / pink).
+- 🖼️ **Profile images** — set an avatar so contacts can identify you (downscaled on-device).
+
+**Data & portability**
+- 📤 **Export chat history** as machine-readable JSON.
+- 💾 **Encrypted backups** — password-sealed (PBKDF2 + AES-GCM) backup files that are useless without your password, plus one-click restore.
+- 🧳 **Portable identity** — export/import your encrypted `.vault.json` to move to a new device.
+- 🧨 **Delete application data** — one button resets the device (and account) to a fresh install.
+
+**Platforms**
+- 🖥️ **Standalone installers** for **Windows, macOS, and Linux** — bundle a Python runtime, no dependencies to install.
+- 🧩 **Chrome extension** — the same client ships as an MV3 extension.
+- 🌐 **Zero frontend dependencies** — no external CDNs, works offline.
+
+## Screenshots
 
 ## Get started
 
 ### Install a standalone app
 
-Double-click installers that bundle everything — **no Python needed on the target machine**. Build them locally on the matching OS, or let CI build them for you (GitHub → **Actions** → the relevant workflow → **Run workflow**, then download the artifact; pushing a `v*` tag attaches installers to a Release).
+Double-click installers that bundle everything — **no Python needed on the target machine**. Build them locally on the matching OS (from the `Lattix/` project folder), or let CI build them for you (GitHub → **Actions** → the relevant workflow → **Run workflow**, then download the artifact; pushing a `v*` tag attaches installers to a Release).
 
-| Platform | Artifact | How to build |
+| Platform | Artifact | How to build (run inside `Lattix/`) |
 |----------|----------|--------------|
 | **Windows** | `LattixSetup.exe` | `installer\build.bat` (needs [Inno Setup 6](https://jrsoftware.org/isdl.php)) |
 | **macOS** | `Lattix-<ver>-<arch>.dmg` | `installer/macos/build.sh` |
 | **Linux** | `Lattix-<ver>-<arch>.run` | `installer/linux/build.sh` |
 
-See [`installer/README.md`](installer/README.md) for details. Launching Lattix starts a local relay on `http://localhost:8000` and opens it in your browser.
+See [`Lattix/installer/README.md`](Lattix/installer/README.md) for details. Launching Lattix starts a local relay on `http://localhost:8000` and opens it in your browser.
 
 ### Run from source
 
@@ -122,7 +129,7 @@ Requires **Python 3.10+**.
 
 ```bash
 git clone https://github.com/aingram702/Lattix.git
-cd Lattix
+cd Lattix/Lattix                   # the app lives in the repo's Lattix/ subfolder
 
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -141,10 +148,10 @@ python run.py --no-browser                 # don't auto-open a browser
 
 ### Chrome extension
 
-The `client/` directory doubles as an unpacked MV3 extension:
+The `Lattix/client/` directory doubles as an unpacked MV3 extension:
 
 1. Run a Lattix relay (`python run.py`, or install a standalone app).
-2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the `client/` folder.
+2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the `Lattix/client/` folder.
 3. Click the Lattix toolbar icon, then open **Settings → Relay server** and point it at your server URL (default `http://localhost:8000`).
 
 All crypto still runs locally; the extension only talks to the relay you configure.
@@ -168,48 +175,47 @@ Blocking, disappearing-message timers, and profile images are conveniences layer
 ## Project layout
 
 ```
-Lattix/
-├── run.py                     # launcher (uvicorn wrapper)
-├── requirements.txt
-├── server/                    # zero-knowledge relay (FastAPI)
-│   ├── main.py                #   REST + WebSocket + groups + static hosting
-│   ├── database.py            #   SQLite: users, envelopes, groups, blobs
-│   └── models.py              #   request/response schemas (payloads are opaque)
-├── client/                    # single-page app (also the Chrome extension)
-│   ├── index.html
-│   ├── css/styles.css         #   themes: light / dark / monokai / kali
-│   ├── js/
-│   │   ├── app.js             #   UI + conversation/group logic
-│   │   ├── crypto.js          #   E2E crypto (ML-KEM / ML-DSA / AES-GCM, backups)
-│   │   ├── api.js             #   REST + WebSocket client
-│   │   ├── config.js          #   configurable relay URL (for the extension)
-│   │   ├── theme.js, sound.js #   appearance + notification tones
-│   │   └── qr.js              #   offline QR-code generator
-│   ├── vendor/lattix-pqc.js   #   bundled, offline post-quantum library
-│   ├── icons/                 #   app + extension icons
-│   ├── manifest.json          #   Chrome extension (MV3) manifest
-│   └── background.js          #   extension service worker
-├── installer/                 # standalone installers (all OSes)
-│   ├── lattix_launcher.py     #   frozen entry point (starts relay, opens browser)
-│   ├── lattix.spec            #   PyInstaller build (Win/mac/Linux)
-│   ├── lattix.ico / .icns     #   Windows / macOS icons
-│   ├── lattix.iss, build.ps1  #   Windows: Inno Setup -> LattixSetup.exe
-│   ├── linux/                 #   Linux: self-extracting .run installer
-│   └── macos/                 #   macOS: .dmg disk image
-├── scripts/
-│   ├── build_vendor.sh        #   rebuild the vendored crypto bundle
-│   └── integration_test.mjs   #   full server + crypto end-to-end test
-├── docs/screenshots/
-└── data/                      # SQLite database (created at runtime)
-
-.github/workflows/             # CI that builds each OS installer
+Lattix/                            # repository root (this is what you clone)
+├── README.md                      # ← this overview
+├── .github/workflows/             # CI that builds each OS installer
+│   ├── build-windows-installer.yml
+│   ├── build-linux-installer.yml
+│   └── build-macos-installer.yml
+└── Lattix/                        # the application
+    ├── run.py                     #   launcher (uvicorn wrapper)
+    ├── requirements.txt
+    ├── README.md                  #   detailed project README
+    ├── server/                    #   zero-knowledge relay (FastAPI)
+    │   ├── main.py                #     REST + WebSocket + groups + static hosting
+    │   ├── database.py            #     SQLite: users, envelopes, groups, blobs
+    │   └── models.py              #     request/response schemas (payloads are opaque)
+    ├── client/                    #   single-page app (also the Chrome extension)
+    │   ├── index.html
+    │   ├── css/styles.css         #     themes: light / dark / monokai / kali
+    │   ├── js/                    #     app, crypto, api, config, theme, sound, qr
+    │   ├── vendor/lattix-pqc.js   #     bundled, offline post-quantum library
+    │   ├── icons/                 #     app + extension icons
+    │   ├── manifest.json          #     Chrome extension (MV3) manifest
+    │   └── background.js          #     extension service worker
+    ├── installer/                 #   standalone installers (all OSes)
+    │   ├── lattix_launcher.py     #     frozen entry point (starts relay, opens browser)
+    │   ├── lattix.spec            #     PyInstaller build (Win/mac/Linux)
+    │   ├── lattix.ico / .icns     #     Windows / macOS icons
+    │   ├── lattix.iss, build.ps1  #     Windows: Inno Setup -> LattixSetup.exe
+    │   ├── linux/                 #     Linux: self-extracting .run installer
+    │   └── macos/                 #     macOS: .dmg disk image
+    ├── scripts/
+    │   ├── build_vendor.sh        #     rebuild the vendored crypto bundle
+    │   └── integration_test.mjs   #     full server + crypto end-to-end test
+    ├── docs/screenshots/
+    └── data/                      #   SQLite database (created at runtime)
 ```
 
 ---
 
 ## Development
 
-Run the full end-to-end test suite (point it at a running server):
+All commands run from the `Lattix/` project folder. Run the full end-to-end test suite (point it at a running server):
 
 ```bash
 # terminal 1
@@ -240,4 +246,4 @@ bash scripts/build_vendor.sh
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](Lattix/LICENSE).

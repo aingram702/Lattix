@@ -122,7 +122,7 @@ Requires **Python 3.10+**.
 
 ```bash
 git clone https://github.com/aingram702/Lattix.git
-cd Lattix
+cd Lattix/Lattix                   # the app lives in the repo's Lattix/ subfolder
 
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -201,9 +201,10 @@ Lattix/
 │   └── integration_test.mjs   #   full server + crypto end-to-end test
 ├── docs/screenshots/
 └── data/                      # SQLite database (created at runtime)
-
-.github/workflows/             # CI that builds each OS installer
 ```
+
+CI workflows that build each OS installer live at the **repository root** (one
+level up), under [`../.github/workflows/`](../.github/workflows/).
 
 ---
 

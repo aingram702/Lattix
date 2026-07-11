@@ -157,6 +157,39 @@ uses the [`Procfile`](Procfile). Then:
 
 ---
 
+## Option E — Private relay with Tailscale (most private)
+
+For a **trusted group** (family, a team), the safest option is not to expose the
+relay to the public internet at all. Run it bound to `localhost` on any always-on
+machine (even one at home — no router ports needed) and put it on a private
+[Tailscale](https://tailscale.com) network. Tailscale issues a valid `*.ts.net`
+HTTPS certificate and reaches it via WireGuard, so members connect from anywhere
+while nobody else can.
+
+```bash
+# 1. Run the relay bound to loopback with a persistent volume
+docker run -d --name lattix --restart unless-stopped \
+  -p 127.0.0.1:8000:8000 -v lattix-data:/data lattix       # (docker build -t lattix . first)
+
+# 2. Install Tailscale and join your tailnet
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+#    In the admin console, enable MagicDNS and HTTPS Certificates.
+
+# 3. Serve it over HTTPS on your tailnet
+sudo tailscale serve --bg 8000
+tailscale serve status        # -> https://<machine>.<tailnet>.ts.net
+```
+
+Install the Tailscale app on each person's device, add them to your tailnet, and
+share that `https://…ts.net` URL (or set it as the extension's relay server). To
+let people **without** Tailscale in, `sudo tailscale funnel --bg 8000` exposes it
+publicly (less private). Full walkthrough — prerequisites, ACLs, backups,
+troubleshooting — is on the wiki:
+[Private Relay with Tailscale](https://github.com/aingram702/Lattix/wiki/Private-Relay-with-Tailscale).
+
+---
+
 ## Connecting the Chrome extension
 
 After deploying, open the extension, go to **Settings → Relay server**, and set

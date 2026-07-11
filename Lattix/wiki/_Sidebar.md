@@ -13,6 +13,7 @@
 
 **Run & deploy**
 - [Configuration](Configuration)
+- [Private Relay with Tailscale](Private-Relay-with-Tailscale)
 - [Self-Hosting & Deployment](Self-Hosting-and-Deployment)
 - [Desktop Apps & Extension](Desktop-Apps-and-Extension)
 

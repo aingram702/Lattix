@@ -2,7 +2,7 @@
 
 # Lattix
 
-**Quantum-resistant chat & file sharing.**
+**Quantum-resistant chat & file sharing. Still under development.**
 End-to-end encrypted messaging built entirely on NIST post-quantum cryptography — with a clean, themeable, single-page UI and one-click installers for Windows, macOS, and Linux.
 
 [![Windows installer](https://github.com/aingram702/Lattix/actions/workflows/build-windows-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-windows-installer.yml)

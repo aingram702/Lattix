@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Lattix
+GenericName=Encrypted messenger
+Comment=Quantum-resistant end-to-end encrypted messaging
+Exec=@EXEC@
+Icon=@ICON@
+Terminal=false
+Categories=Network;InstantMessaging;
+Keywords=chat;messaging;encryption;post-quantum;
+StartupNotify=true

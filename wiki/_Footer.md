@@ -1,0 +1,1 @@
+**Lattix** — quantum-resistant, end-to-end encrypted messaging · [Repository](https://github.com/aingram702/Lattix) · MIT License · The server is a zero-knowledge relay; verify safety codes to defeat MITM.

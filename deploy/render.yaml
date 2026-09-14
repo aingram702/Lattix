@@ -1,0 +1,27 @@
+# Render Blueprint for Lattix.
+#
+# Render reads render.yaml from the REPOSITORY ROOT, so copy this file there
+# (this repo keeps the app under Lattix/, hence rootDir below). Then in Render:
+# New + -> Blueprint -> pick your repo. A persistent disk requires a paid plan.
+
+services:
+  - type: web
+    name: lattix
+    runtime: docker
+    plan: starter
+    rootDir: Lattix
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    numInstances: 1            # keep 1 — sessions/WebSockets are in-memory
+    envVars:
+      - key: LATTIX_DB
+        value: /data/lattix.db
+      - key: LATTIX_FORWARDED_ALLOW_IPS
+        value: "*"
+      - key: LATTIX_MAX_FILE_MB
+        value: "50"
+    disk:
+      name: lattix-data
+      mountPath: /data
+      sizeGB: 1

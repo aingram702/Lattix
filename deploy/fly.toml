@@ -1,0 +1,37 @@
+# Fly.io config for Lattix. Copy this to the Lattix/ directory, then:
+#   fly launch --no-deploy      # (or `fly apps create lattix-yourname`)
+#   fly volumes create lattix_data --size 1 --region iad
+#   fly deploy
+#
+# Change `app` to a globally-unique name and pick a region near your users.
+
+app = "lattix-changeme"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  LATTIX_DB = "/data/lattix.db"
+  LATTIX_FORWARDED_ALLOW_IPS = "*"
+  LATTIX_MAX_FILE_MB = "50"
+
+[[mounts]]
+  source = "lattix_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Keep exactly one always-on machine: tokens, WebSocket connections, and the
+  # rate limiter live in memory, so multiple machines would break sessions and
+  # real-time delivery.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "get"
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"

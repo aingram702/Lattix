@@ -3,7 +3,9 @@
 # Lattix
 
 **Quantum-resistant chat & file sharing.**
-End-to-end encrypted messaging built entirely on NIST post-quantum cryptography — with a clean, themeable, single-page UI and one-click installers for Windows, macOS, and Linux.
+End-to-end encrypted messaging built entirely on NIST post-quantum cryptography — with a clean, themeable, accessible single-page UI and one-click installers for Windows, macOS, and Linux.
+
+**Version 2.0** · [What's new](#whats-new-in-20)
 
 [![Windows installer](https://github.com/aingram702/Lattix/actions/workflows/build-windows-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-windows-installer.yml)
 [![Linux installer](https://github.com/aingram702/Lattix/actions/workflows/build-linux-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-linux-installer.yml)
@@ -19,6 +21,7 @@ Every message and file is encrypted **in your browser** before it ever touches t
 
 ## Table of contents
 
+- [What's new in 2.0](#whats-new-in-20)
 - [Cryptography](#cryptography)
 - [How a message is protected](#how-a-message-is-protected)
 - [Features](#features)
@@ -62,25 +65,90 @@ Wrapping for the sender too means you can read your own sent history across devi
 
 ---
 
+## What's new in 2.0
+
+Version 2.0 is a **usability, accessibility and performance release**. The
+cryptography, the wire format, and the zero-knowledge guarantee are unchanged —
+2.0 clients and 1.x histories are fully compatible — but almost every surface you
+touch has been reworked.
+
+**The conversation reads like a conversation.** Messages from one sender group
+under a single header, days are separated, every bubble carries a timestamp, group
+members get stable colors and avatars, links are clickable, and hovering a message
+offers Copy and Quote. Received images decrypt and display inline (only when their
+signature verified) with a click-to-zoom lightbox.
+
+**Nothing gets lost.** Drafts are kept per conversation and survive reloads; a
+failed send puts your text back in the box instead of dropping it; scrolling up no
+longer gets yanked to the bottom by an arriving message.
+
+**It's usable without a mouse, and with a screen reader.** ARIA roles and labels
+throughout, a real focus trap and focus return in every dialog, a visible focus
+ring, `prefers-reduced-motion` support, and shortcuts for the things you do
+constantly. Every theme passes an automated axe-core WCAG 2.1 A/AA audit with no
+serious or critical violations. The browser's `confirm()` and `prompt()` are gone.
+
+**Creating an account is harder to get wrong.** A confirm-password field, a
+strength meter, a Caps Lock warning, an explicit acknowledgement that the password
+can't be recovered, and a warning before an existing vault is overwritten.
+
+**It stays fast with a long history.** Renders are batched instead of running once
+per arriving envelope, the message list renders a capped window with a *Load
+earlier* button, boot work runs in parallel, and disappearing messages expire via
+a single sweep rather than one timer per message.
+
+**Plus:** a **System** theme that follows your OS live (applied before first paint,
+so no flash of the wrong palette), conversation search, online presence dots, an
+unread count in the tab title, drag-and-drop and clipboard-paste attachments,
+size-checked *before* encryption, and WebSocket reconnect with exponential backoff.
+
+Three small backwards-compatible relay changes support this: `/api/health` now
+advertises `max_file_bytes`, and the relay sends a presence snapshot on connect and
+refreshes presence on delivery.
+
+Ten test suites and 234 assertions were added or extended along the way — see
+[Development](#development). Six bugs turned up that weren't on the plan, four of
+them pre-existing; the full write-up is in the wiki.
+
+---
+
 ## Features
 
 **Messaging**
 - 🔐 **Post-quantum end-to-end encryption** for every message and file.
 - 👨‍👩‍👧 **Group chats** — family or team groups, E2E encrypted (the CEK is wrapped per member). The relay still only ever sees ciphertext.
-- 📎 **Encrypted file sharing** — files are encrypted client-side and stored as opaque blobs (up to 50 MB by default).
-- ⚡ **Real-time delivery** over WebSocket, with offline message queueing.
+- 📎 **Encrypted file sharing** — files are encrypted client-side and stored as opaque blobs (up to 50 MB by default). **Drag a file onto the conversation** or **paste an image** straight from the clipboard; oversized files are rejected before they're encrypted, not after.
+- 🖼️ **Inline image previews** — received images are decrypted and shown in the conversation with a click-to-zoom lightbox. Only ever applied to messages whose **signature verified**; a forged or tampered envelope stays an inert file card. Off by default (**Settings → Media**).
+- ⚡ **Real-time delivery** over WebSocket, with offline queueing and automatic reconnect (exponential backoff).
+- 🟢 **Presence** — a dot on each conversation shows who's online, including contacts who were already connected when you signed in.
 - ⏲️ **Disappearing messages** — a Signal-style per-conversation timer (30 s → 1 week); expired messages are purged on both client and server.
-- 🔔 **Notification tones & desktop alerts** — WebAudio send/receive tones and optional in-app desktop notifications (no phone number or SMS — privacy-preserving by design).
+- 🔔 **Notification tones & desktop alerts** — WebAudio send/receive tones and optional desktop notifications, plus an **unread count in the tab title** (no phone number or SMS — privacy-preserving by design).
+
+**The conversation view** *(rebuilt in 2.0)*
+- 🧵 **Message grouping** — consecutive messages from one sender collapse under a single header, with **date separators** between days and a timestamp on every bubble.
+- 🎨 **Per-sender colors and avatars** in group chats, so you can tell who's talking at a glance.
+- 🔗 **Linkified text**, and **Copy** / **Quote** actions on hover.
+- ⤓ **Jump to latest** — a pill appears when you scroll up; new messages never yank you away from what you're reading.
+- 📜 **Windowed history** — long conversations render a capped window with a **Load earlier** button instead of thousands of DOM nodes, and keep your scroll position when you expand it.
+- ✏️ **Per-conversation drafts** — switching chats or reloading the page doesn't lose what you'd typed, and a failed send puts your text back in the box.
 
 **Security & privacy**
 - ✍️ **Signature verification** on every message — 🔒 marks authenticated messages, ⚠ marks failures.
 - 🧾 **Key-fingerprint (safety-code) verification** — compare fingerprints out-of-band to defeat man-in-the-middle / key-substitution attacks.
 - 🔗 **QR / link sharing** — a scannable QR code and share URL (offline QR generator, no CDN) that opens a *verified* conversation with you.
+- 🛡️ **Account-creation guards** *(new in 2.0)* — confirm-password field, a live strength meter, a Caps Lock warning, an explicit acknowledgement that **your password cannot be recovered**, a warning before an existing vault is overwritten, and a nudge to take an encrypted backup on first run.
 - 🚫 **Block users** — locally hide and ignore messages from specific accounts.
 - 🗄️ **Encrypted local vault** — your private keys are sealed with your password (PBKDF2 + AES-GCM) and never leave the device.
 
+**Accessibility & keyboard** *(new in 2.0)*
+- ⌨️ **Fully keyboard-operable** — <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> new conversation, <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>F</kbd> search, <kbd>/</kbd> to reach the message box, <kbd>Esc</kbd> to close. Every dialog traps focus and returns it where it came from.
+- 🦮 **Screen-reader support** — ARIA roles, labels, and live regions throughout. Every theme passes an automated **axe-core WCAG 2.1 A/AA** audit with no serious or critical violations.
+- 👁️ A visible **focus ring** on every control, and full **`prefers-reduced-motion`** support.
+- 💬 **No browser `confirm()`/`prompt()`** anywhere — every confirmation is a real in-app dialog you can style, read, and dismiss.
+
 **Personalization**
-- 🎨 **Four themes** — Light, Dark, Monokai, and a dark **Kali Linux** theme with the Kali dragon embedded.
+- 🎨 **Five theme choices** — **System** (follows your OS live), Light, Dark, Monokai, and a dark **Kali Linux** theme with the Kali dragon embedded. Your choice is applied **before first paint**, so there's no flash of the wrong palette on load.
+- 🔎 **Conversation search** — filter the sidebar as you type.
 - 🖌️ **Chat colors** — recolor your chat bubbles (red / green / blue / pink).
 - 🖼️ **Profile images** — set an avatar so contacts can identify you (downscaled on-device).
 
@@ -92,7 +160,7 @@ Wrapping for the sender too means you can read your own sent history across devi
 
 **Platforms**
 - 🖥️ **Standalone installers** for **Windows, macOS, and Linux** — bundle a Python runtime, no dependencies to install.
-- 🧩 **Chrome extension** — the same client ships as an MV3 extension.
+- 🧩 **Chrome extension** — the same client ships as an MV3 extension (no inline script; CSP-clean).
 - 🌐 **Zero frontend dependencies** — no external CDNs, works offline.
 
 ## Screenshots
@@ -123,7 +191,7 @@ Requires **Python 3.10+**.
 
 ```bash
 git clone https://github.com/aingram702/Lattix.git
-cd Lattix/Lattix                   # the app lives in the repo's Lattix/ subfolder
+cd Lattix
 
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -181,7 +249,8 @@ Blocking, disappearing-message timers, and profile images are conveniences layer
 ## Project layout
 
 ```
-Lattix/
+Lattix/                        # repository root (this is what you clone)
+├── .github/workflows/         # CI that builds each OS installer
 ├── run.py                     # launcher (uvicorn wrapper)
 ├── requirements.txt
 ├── server/                    # zero-knowledge relay (FastAPI)
@@ -190,12 +259,13 @@ Lattix/
 │   └── models.py              #   request/response schemas (payloads are opaque)
 ├── client/                    # single-page app (also the Chrome extension)
 │   ├── index.html
-│   ├── css/styles.css         #   themes: light / dark / monokai / kali
+│   ├── css/styles.css         #   themes: system / light / dark / monokai / kali
 │   ├── js/
 │   │   ├── app.js             #   UI + conversation/group logic
 │   │   ├── crypto.js          #   E2E crypto (ML-KEM / ML-DSA / AES-GCM, backups)
-│   │   ├── api.js             #   REST + WebSocket client
+│   │   ├── api.js             #   REST + WebSocket client (reconnect backoff)
 │   │   ├── config.js          #   configurable relay URL (for the extension)
+│   │   ├── preload.js         #   applies the stored theme before first paint
 │   │   ├── theme.js, sound.js #   appearance + notification tones
 │   │   └── qr.js              #   offline QR-code generator
 │   ├── vendor/lattix-pqc.js   #   bundled, offline post-quantum library
@@ -211,33 +281,60 @@ Lattix/
 │   └── macos/                 #   macOS: .dmg disk image
 ├── scripts/
 │   ├── build_vendor.sh        #   rebuild the vendored crypto bundle
-│   └── integration_test.mjs   #   full server + crypto end-to-end test
+│   ├── integration_test.mjs   #   full server + crypto end-to-end test
+│   ├── ui_test*.mjs           #   nine headless-browser UI suites (Playwright + axe)
+│   └── lib/harness.mjs        #   shared signup/unlock test helpers
 ├── docs/screenshots/
 └── data/                      # SQLite database (created at runtime)
 ```
 
-CI workflows that build each OS installer live at the **repository root** (one
-level up), under [`../.github/workflows/`](../.github/workflows/).
+CI workflows that build each OS installer live under
+[`.github/workflows/`](.github/workflows/).
 
 ---
 
 ## Development
 
-Run the full end-to-end test suite (point it at a running server):
+### Tests
+
+Lattix ships **ten suites, 234 assertions** — one protocol suite that drives the
+real server with the real crypto module, and nine browser suites that drive the
+real UI in headless Chromium.
+
+| Suite | Covers |
+|---|---|
+| `integration_test.mjs` | Protocol: registration, login, the key directory, encrypted messaging, plaintext-leak checks, sender self-decryption, tamper rejection, the encrypted-file round-trip, live WebSocket delivery. |
+| `ui_test.mjs` | Rendering, grouping, date separators, scroll anchoring, failed-send recovery. |
+| `ui_test_media.mjs` | Encrypted image round-trip, previews, lightbox, group rendering. |
+| `ui_test_a11y.mjs` | axe-core WCAG 2.1 A/AA over every theme, plus a keyboard-only walkthrough. |
+| `ui_test_dialogs.mjs` | The in-app dialog controller, and a real encrypted backup/restore round-trip. |
+| `ui_test_composer.mjs` | Drag-drop, clipboard paste, drafts, the send-busy lock. |
+| `ui_test_sidebar.mjs` | Conversation filter, presence, unread title, reconnect backoff. |
+| `ui_test_auth.mjs` | Signup guards, strength meter, vault-overwrite warning. |
+| `ui_test_theme.mjs` | System theme, the anti-flash bootstrap, light-mode contrast. |
+| `ui_test_perf.mjs` | Render batching, the render window, the expiry sweep. |
 
 ```bash
-# terminal 1
-python run.py --no-browser --port 8111
-# terminal 2
-node scripts/integration_test.mjs        # uses LATTIX_BASE, defaults to :8111
+pip install -r requirements.txt
+npm i -D playwright axe-core && npx playwright install chromium
+
+# one relay per suite — see the note below
+LATTIX_DB=/tmp/lattix-test.db python run.py --no-browser --port 8111 &
+LATTIX_BASE=http://127.0.0.1:8111 node scripts/integration_test.mjs
+LATTIX_BASE=http://127.0.0.1:8111 node scripts/ui_test.mjs
 ```
 
-It exercises registration, login, the key directory, encrypted messaging, plaintext-leak checks, sender self-decryption, tamper rejection, the encrypted-file round-trip, and live WebSocket delivery — all against the real server using the real client crypto module.
+> **Give each suite its own relay and database.** `/api/register` is rate-limited
+> per IP and the buckets live in the server process, so consecutive runs against
+> one relay start returning `429`. Restarting the relay clears them.
 
-Rebuild the vendored post-quantum bundle (needs Node.js):
+The browser suites assert *behaviour* — what the DOM actually does — rather than
+screenshots, so they stay meaningful on a loaded CI box.
+
+### Rebuilding the vendored crypto bundle
 
 ```bash
-bash scripts/build_vendor.sh
+bash scripts/build_vendor.sh        # needs Node.js
 ```
 
 ---

@@ -62,7 +62,7 @@ _DUMMY_LOGIN_SALT = secrets.token_hex(16)
 # API docs (/api/docs) can be disabled in production by setting LATTIX_DOCS_URL="".
 _DOCS_URL = os.environ.get("LATTIX_DOCS_URL", "/api/docs") or None
 
-app = FastAPI(title="Lattix", version="1.1.0", docs_url=_DOCS_URL)
+app = FastAPI(title="Lattix", version="2.0.0", docs_url=_DOCS_URL)
 
 # Optional CORS — only needed if the client is served from a DIFFERENT origin
 # than the API (the bundled web app is same-origin and needs none). Set
@@ -469,6 +469,18 @@ class ConnectionManager:
         for target in {envelope["recipient"], envelope["sender"]}:
             await self._send_to(target, {"type": "envelope", "envelope": envelope})
 
+        # A first message is what makes two users contacts, and that moment
+        # produces no connect/disconnect transition — so without this the pair
+        # would each show the other as offline until one of them reconnects.
+        # Both are contacts by definition here, so this respects the same
+        # scoping as presence().
+        sender, recipient = envelope["sender"], envelope["recipient"]
+        if sender != recipient:
+            if sender in self.active:
+                await self._send_to(recipient, {"type": "presence", "username": sender, "online": True})
+            if recipient in self.active:
+                await self._send_to(sender, {"type": "presence", "username": recipient, "online": True})
+
     async def deliver_group(self, members: list[str], envelope: dict) -> None:
         """Push a group envelope to every member currently online."""
         for target in set(members):
@@ -485,6 +497,20 @@ class ConnectionManager:
         for peer in db.list_contacts(username):
             await self._send_to(peer, msg)
 
+    async def send_presence_snapshot(self, username: str, ws: WebSocket) -> None:
+        """Tell a freshly connected client which of its contacts are already
+        online. Presence is otherwise only published on transitions, so without
+        this a client that connects (or reloads) shows every contact as offline
+        until they happen to reconnect. Scoped to this user's own contacts,
+        exactly like presence()."""
+        for peer in db.list_contacts(username):
+            if peer in self.active:
+                try:
+                    await ws.send_json({"type": "presence", "username": peer, "online": True})
+                except Exception:
+                    self.disconnect(username, ws)
+                    return
+
 
 manager = ConnectionManager()
 
@@ -497,6 +523,7 @@ async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
         return
     await manager.connect(username, ws)
     await manager.presence(username, True)
+    await manager.send_presence_snapshot(username, ws)
     try:
         # Keep the socket alive; clients may send pings.
         while True:
@@ -513,7 +540,9 @@ async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
 # --------------------------------------------------------------------------- #
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "version": app.version}
+    # max_file_bytes lets the client reject an oversized attachment before it
+    # spends time encrypting it, instead of discovering the limit via a 413.
+    return {"status": "ok", "version": app.version, "max_file_bytes": MAX_FILE_BYTES}
 
 
 # --------------------------------------------------------------------------- #

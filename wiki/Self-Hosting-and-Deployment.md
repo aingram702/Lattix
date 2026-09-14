@@ -1,7 +1,7 @@
 # Self-Hosting & Deployment
 
 This page summarizes hosting Lattix as a public service. The repository's
-[`DEPLOYMENT.md`](https://github.com/aingram702/Lattix/blob/main/Lattix/DEPLOYMENT.md)
+[`DEPLOYMENT.md`](https://github.com/aingram702/Lattix/blob/main/DEPLOYMENT.md)
 has the full, copy-pasteable walkthroughs.
 
 ## Two rules that shape every option
@@ -21,8 +21,8 @@ See [Configuration](Configuration) for every environment variable.
 
 A single VPS runs the relay plus **Caddy**, which fetches and renews a Let's
 Encrypt certificate automatically. Files:
-[`deploy/docker-compose.yml`](https://github.com/aingram702/Lattix/blob/main/Lattix/deploy/docker-compose.yml)
-and [`deploy/Caddyfile`](https://github.com/aingram702/Lattix/blob/main/Lattix/deploy/Caddyfile).
+[`deploy/docker-compose.yml`](https://github.com/aingram702/Lattix/blob/main/deploy/docker-compose.yml)
+and [`deploy/Caddyfile`](https://github.com/aingram702/Lattix/blob/main/deploy/Caddyfile).
 
 ```bash
 # 1. DNS: point chat.example.com -> your server's public IP (A/AAAA record)
@@ -31,7 +31,7 @@ and [`deploy/Caddyfile`](https://github.com/aingram702/Lattix/blob/main/Lattix/d
 curl -fsSL https://get.docker.com | sh
 # 4. Configure your domain and launch:
 git clone https://github.com/aingram702/Lattix.git
-cd Lattix/Lattix/deploy
+cd Lattix/deploy
 echo "LATTIX_DOMAIN=chat.example.com" > .env
 docker compose up -d --build
 ```
@@ -55,7 +55,7 @@ use it instead of building, replace the `lattix` service's `build:` block with
 
 ## Option B — Render
 
-Uses [`deploy/render.yaml`](https://github.com/aingram702/Lattix/blob/main/Lattix/deploy/render.yaml).
+Uses [`deploy/render.yaml`](https://github.com/aingram702/Lattix/blob/main/deploy/render.yaml).
 Render terminates TLS, supports WebSockets, and injects `$PORT`. Copy
 `render.yaml` to the **repository root**, then create a **Blueprint** in the
 Render dashboard. A **persistent disk** (mounted at `/data`) needs a paid
@@ -64,7 +64,7 @@ deploy. Keep instance count at **1**.
 
 ## Option C — Fly.io
 
-Uses [`deploy/fly.toml`](https://github.com/aingram702/Lattix/blob/main/Lattix/deploy/fly.toml).
+Uses [`deploy/fly.toml`](https://github.com/aingram702/Lattix/blob/main/deploy/fly.toml).
 
 ```bash
 cp deploy/fly.toml ./fly.toml           # edit `app` to a unique name
@@ -79,7 +79,7 @@ The config keeps one always-on machine so in-memory state survives.
 Any Dockerfile-building platform works. Set the service **Root Directory** to
 `Lattix`, add a **persistent volume** at `/data` with `LATTIX_DB=/data/lattix.db`,
 set `LATTIX_FORWARDED_ALLOW_IPS=*`, and keep it to **one instance**. A
-[`Procfile`](https://github.com/aingram702/Lattix/blob/main/Lattix/Procfile) is
+[`Procfile`](https://github.com/aingram702/Lattix/blob/main/Procfile) is
 included for buildpack-based platforms.
 
 ## Connecting clients

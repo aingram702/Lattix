@@ -60,6 +60,37 @@ third-party gateway — leaking metadata and breaking the zero-knowledge model.
 Lattix instead offers **in-app tones and desktop notifications** while the app is
 open. See [Features](Features).
 
+### I'm upgrading from 1.x — is there anything to do?
+
+No. [2.0](Release-Notes) changes the interface, not the cryptography or the wire
+format. Your keys, chats, groups and settings carry over untouched — there's no
+database migration, no vault re-encryption, and no re-registration. Update the
+relay and reload the client. Old and new clients also interoperate on the same
+relay while you're rolling it out.
+
+### Can I use Lattix with a keyboard only, or with a screen reader?
+
+Yes. Every control is keyboard-operable, dialogs trap focus and return it when
+they close, and the UI carries ARIA roles, labels and live regions. Every theme
+passes an automated axe-core WCAG 2.1 A/AA audit with no serious or critical
+violations. Shortcuts are listed in **Settings → Keyboard**. See
+[Features](Features#accessibility--keyboard).
+
+### Are inline image previews safe?
+
+They're only ever applied to a message whose **ML-DSA signature verified** — a
+forged or tampered envelope stays an inert file card you have to open
+deliberately. The image is decrypted locally like any other file; nothing is
+fetched from a third party. Previews are **off by default**; enable them under
+**Settings → Media**.
+
+### Does it stay usable with thousands of messages?
+
+Yes. Renders are batched into one animation frame rather than running per arriving
+message, and the conversation renders a capped window with a **Load earlier**
+button instead of putting the whole history in the DOM. Nothing is dropped —
+only what's rendered is limited. See [Architecture](Architecture#rendering).
+
 ### Is my profile picture encrypted?
 
 Profile images are shared through the directory so other users can see them, so

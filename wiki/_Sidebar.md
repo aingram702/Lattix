@@ -4,6 +4,7 @@
 - [Home](Home)
 - [Getting Started](Getting-Started)
 - [Features](Features)
+- [Release Notes](Release-Notes)
 - [FAQ](FAQ)
 
 **How it works**
@@ -22,4 +23,6 @@
 - [Development & Contributing](Development-and-Contributing)
 
 ---
+Lattix **2.0.0**
+
 [GitHub repo »](https://github.com/aingram702/Lattix)

@@ -9,6 +9,7 @@ public keys, opaque ciphertext, and encrypted blobs it cannot read — it can't
 read your messages, and it can't forge them.
 
 - **Repository:** https://github.com/aingram702/Lattix
+- **Current version:** **2.0.0** — see [Release Notes](Release-Notes)
 - **License:** MIT
 
 ---
@@ -22,8 +23,27 @@ read your messages, and it can't forge them.
 | ✍️ **Authenticated** | Every envelope is signed; recipients verify it client-side. A 🔒 marks authentic messages. |
 | 👨‍👩‍👧 **Groups** | Family/team group chats, E2E encrypted (the content key is wrapped per member). |
 | ⏲️ **Disappearing messages** | Signal-style per-conversation timers, purged on client **and** server. |
+| ♿ **Accessible** | Fully keyboard-operable with screen-reader support; every theme passes an automated WCAG 2.1 A/AA audit. |
 | 🧩 **Everywhere** | Web app, Chrome extension, and standalone installers for Windows, macOS, and Linux. |
 | 🌐 **No CDNs** | The whole frontend is dependency-free and works offline. |
+
+---
+
+## New in 2.0
+
+A usability, accessibility and performance release. **The cryptography and wire
+format are unchanged** — 2.0 reads 1.x histories, vaults and backups, and there is
+nothing to migrate.
+
+Message grouping, date separators and per-sender colors · inline image previews
+for verified messages · per-conversation drafts that survive reloads · full
+keyboard operation and screen-reader support · a **System** theme with no
+first-paint flash · conversation search, presence dots and an unread tab count ·
+drag-and-drop and paste attachments · batched rendering and a windowed message
+list that keep long histories fast.
+
+Full detail, including the six bugs found along the way, is in the
+**[Release Notes](Release-Notes)**.
 
 ---
 
@@ -31,6 +51,7 @@ read your messages, and it can't forge them.
 
 - **New user?** → [Getting Started](Getting-Started)
 - **Want the full feature tour?** → [Features](Features)
+- **What changed in 2.0?** → [Release Notes](Release-Notes)
 - **Curious how it works?** → [Architecture](Architecture) · [Cryptography](Cryptography)
 - **Running it for others?** → [Self-Hosting & Deployment](Self-Hosting-and-Deployment)
 - **Building on the API?** → [API Reference](API-Reference)
@@ -63,8 +84,8 @@ See [Cryptography](Cryptography) for the full construction.
 
 ## Project status
 
-Lattix is a solid, correct **reference implementation** — not a formally audited
-product. It is a great way to learn how a post-quantum E2E messenger fits
-together, and it is usable for real for small trusted groups. Get a professional
-review before trusting it with lives. See
+Lattix is at **2.0.0** and is a solid, correct **reference implementation** — not
+a formally audited product. It is a great way to learn how a post-quantum E2E
+messenger fits together, and it is usable for real for small trusted groups. Get a
+professional review before trusting it with lives. See
 [Security & Trust Model](Security-and-Trust-Model) for the honest limitations.

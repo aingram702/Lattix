@@ -8,15 +8,56 @@ security features work, see [Cryptography](Cryptography) and
 
 - **Text messages** — type and press Enter (Shift+Enter for a newline). Every
   message is end-to-end encrypted and signed.
-- **Encrypted files** — click the 📎 button. The file is encrypted in your
-  browser and uploaded as an opaque blob (default max **50 MB**, configurable via
-  `LATTIX_MAX_FILE_MB`). Recipients download and decrypt it locally.
+- **Encrypted files** — click the 📎 button, **drag a file onto the
+  conversation**, or **paste an image** from the clipboard. The file is encrypted
+  in your browser and uploaded as an opaque blob (default max **50 MB**,
+  configurable via `LATTIX_MAX_FILE_MB`). Recipients download and decrypt it
+  locally. Oversized files are rejected *before* they're encrypted — the client
+  reads the relay's limit from `/api/health` at boot.
+- **Inline image previews** — received images are decrypted and displayed in the
+  conversation, and click to open a full-size lightbox. This is applied **only to
+  messages whose signature verified**: a forged or tampered envelope stays an
+  inert file card you have to open deliberately. Turn it on under
+  **Settings → Media → Show images inline** (off by default).
 - **Delivery** — messages arrive in real time over WebSocket when the recipient
-  is online, and are queued on the server for delivery when they next connect.
+  is online, and are queued on the server for delivery when they next connect. If
+  the socket drops, the client reconnects with exponential backoff.
 - **Authenticity** — a 🔒 next to a message means its signature verified; a ⚠
   means it failed and the content should not be trusted.
 - **Self-history** — messages are also wrapped for you, so you can read your own
   sent history on any device that holds your vault.
+
+## Reading a conversation
+
+- **Grouping** — consecutive messages from one sender collapse under a single
+  header rather than repeating it, with **date separators** between days and a
+  timestamp on every message.
+- **Sender colors & avatars** — in a group, each member gets a stable color and
+  avatar derived from their username, so the same person looks the same to
+  everyone.
+- **Links** are clickable. Hovering a message reveals **Copy** and **Quote**
+  (quoting drops the text into the composer prefixed with `>`).
+- **Jump to latest** — scroll up and a pill appears; arriving messages won't drag
+  you back down mid-read. Click it to return to the bottom.
+- **Long histories** render a capped window with a **Load earlier** button. Your
+  scroll position is preserved when you expand it, and nothing is dropped from
+  memory — only from the DOM.
+
+## Drafts
+
+Anything you've typed but not sent is kept **per conversation**. Switch chats,
+close the tab, come back tomorrow — it's still there, and the conversation shows
+an ✏️ preview in the sidebar. If a send fails, your text goes back into the
+composer rather than disappearing.
+
+## Search & presence
+
+- **Conversation search** — the box above the conversation list filters as you
+  type (<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>F</kbd>).
+- **Presence** — a dot shows which contacts are online right now, including ones
+  who were already connected when you signed in.
+- **Unread count** — the number of unread messages appears in the browser tab
+  title, so a background tab still tells you something arrived.
 
 ## Group chats
 
@@ -66,9 +107,16 @@ shown across the UI so contacts can recognize you.
 
 ## Themes & chat colors
 
-**Settings → Theme:** **Light**, **Dark**, **Monokai**, and a dark **Kali Linux**
-theme (with the Kali dragon embedded). **Settings → Chat color:** recolor your
-own chat bubbles — red, green, blue, or pink. Both preferences persist locally.
+**Settings → Theme:** **System**, **Light**, **Dark**, **Monokai**, and a dark
+**Kali Linux** theme (with the Kali dragon embedded).
+
+**System** follows your operating system's light/dark setting and switches live
+when you change it — no reload needed. Picking any other theme explicitly stops
+it following the OS. Whichever you choose is applied **before the first paint**,
+so the page never flashes the wrong palette on load.
+
+**Settings → Chat color:** recolor your own chat bubbles — red, green, blue, or
+pink. Both preferences persist locally.
 
 ## Notifications
 
@@ -93,6 +141,43 @@ own chat bubbles — red, green, blue, or pink. Both preferences persist locally
   another device (import it from the welcome screen).
 - **Delete application data** — wipes this device's keys, chats, and settings and
   deletes your server account, resetting Lattix to a fresh install. Irreversible.
+
+## Accessibility & keyboard
+
+Lattix is fully operable without a mouse, and every theme passes an automated
+**axe-core WCAG 2.1 A/AA** audit with no serious or critical violations.
+
+| Shortcut | Does |
+|---|---|
+| <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> | New conversation |
+| <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>F</kbd> | Search conversations |
+| <kbd>/</kbd> | Jump to the message box |
+| <kbd>Enter</kbd> | Send (<kbd>Shift</kbd>+<kbd>Enter</kbd> for a newline) |
+| <kbd>Esc</kbd> | Close the open dialog or menu |
+
+The same list is in **Settings → Keyboard**.
+
+- Every dialog **traps focus** while open and **returns focus** to whatever opened
+  it when closed.
+- Controls carry ARIA roles and labels, and status changes are announced through
+  live regions.
+- There's a visible **focus ring** on every focusable control, and
+  **`prefers-reduced-motion`** is honoured throughout.
+- Lattix never uses the browser's `confirm()` or `prompt()` — every confirmation
+  is a real in-app dialog, which means it can be labelled, read aloud, and
+  dismissed with <kbd>Esc</kbd>.
+
+## Creating an account safely
+
+Your password seals a vault that **cannot be recovered**, so the signup form works
+to stop a typo becoming a lost identity:
+
+- A **confirm-password** field.
+- A live **strength meter**.
+- A **Caps Lock** warning.
+- An explicit **acknowledgement** that the password can't be recovered.
+- A **warning before overwriting** a vault that already exists on the device.
+- A nudge to take an **encrypted backup** on first run.
 
 ## Cross-platform
 

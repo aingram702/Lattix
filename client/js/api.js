@@ -72,6 +72,11 @@ export class LattixApi {
     this.username = tokenResp.username;
   }
 
+  // ---- relay capabilities ----
+  health() {
+    return this._req("GET", "/api/health");
+  }
+
   // ---- directory / profile ----
   me() {
     return this._req("GET", "/api/me");
@@ -150,11 +155,18 @@ export class LattixApi {
     const ws = new WebSocket(url);
     this.ws = ws;
 
-    ws.onopen = () => this._emit("status", { connected: true });
+    ws.onopen = () => {
+      this._backoff = 1000;
+      this._emit("status", { connected: true });
+    };
     ws.onclose = () => {
       this._emit("status", { connected: false });
-      // auto-reconnect while logged in
-      if (this.token) setTimeout(() => this.connectSocket(), 2000);
+      if (!this.token) return;
+      // Back off rather than hammering a relay that's down; capped so a
+      // long outage still recovers promptly once it ends.
+      this._backoff = Math.min((this._backoff || 1000) * 1.6, 20000);
+      clearTimeout(this._retry);
+      this._retry = setTimeout(() => this.connectSocket(), this._backoff);
     };
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
@@ -170,8 +182,17 @@ export class LattixApi {
     }, 25000);
   }
 
+  // Reconnect immediately, skipping whatever backoff is pending. Used by the
+  // connection strip so a user who knows the network is back needn't wait.
+  reconnectNow() {
+    clearTimeout(this._retry);
+    this._backoff = 1000;
+    this.connectSocket();
+  }
+
   _closeSocket() {
     if (this._ping) clearInterval(this._ping);
+    if (this._retry) clearTimeout(this._retry);
     if (this.ws) {
       this.ws.onclose = null;
       try {

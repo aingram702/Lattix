@@ -13,12 +13,14 @@ main repo for version control and reviewed changes, then published to the wiki.
 | `_Footer.md` | Page footer (special file) |
 | `Getting-Started.md` | Install & first run |
 | `Features.md` | Full feature tour |
+| `Release-Notes.md` | What changed in each version |
 | `Architecture.md` | How the system fits together |
 | `Cryptography.md` | Algorithms & envelope scheme |
 | `Security-and-Trust-Model.md` | Threat model & limitations |
 | `Configuration.md` | Environment variables |
 | `API-Reference.md` | REST + WebSocket API |
 | `Self-Hosting-and-Deployment.md` | Hosting it publicly |
+| `Private-Relay-with-Tailscale.md` | Private relay over a Tailscale network |
 | `Desktop-Apps-and-Extension.md` | Installers & Chrome extension |
 | `Development-and-Contributing.md` | Dev setup & contributing |
 | `FAQ.md` | Common questions |

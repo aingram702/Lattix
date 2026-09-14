@@ -9,6 +9,10 @@ import {
 import { playSent, playReceived, soundsEnabled, setSounds } from "./sound.js";
 import { encodeText, ECC } from "./qr.js";
 
+// Upload ceiling. The relay is the authority (LATTIX_MAX_FILE_MB); this is the
+// fallback used until /api/health answers, and matches the server default.
+let MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 const VAULT_KEY = "lattix.vault";
 const BLOCK_KEY = "lattix.blocked";
 const NOTIFY_KEY = "lattix.notify";
@@ -22,6 +26,7 @@ const state = {
   online: new Set(),
   seen: new Set(),       // dedup keys ("d<id>" for dm, "g<gid>:<id>" for group)
   blocked: loadBlocked(),
+  filter: "",            // sidebar search text
   connected: false,
   pendingAdd: null,      // deep-link: username to open after boot
 };
@@ -47,17 +52,63 @@ function el(tag, attrs = {}, ...children) {
 }
 const escapeHtml = (s) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// Trailing punctuation is excluded so "see https://x.dev." doesn't eat the dot.
+const URL_RE = /\bhttps?:\/\/[^\s<]+[^\s<.,:;"')\]]/g;
+
+// Escape FIRST, then linkify the escaped text — the order matters. Anything
+// the user typed is inert by the time we build anchors out of it, and the href
+// carries the already-escaped form (&amp; in a URL is correct in an attribute).
+// No prefetch, no link preview: fetching would leak the reader's IP and the
+// fact they opened the message to whoever sent the link.
+function messageHtml(text) {
+  return escapeHtml(text)
+    .replace(URL_RE, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer nofollow">${u}</a>`)
+    .replace(/\n/g, "<br>");
+}
 const fmtTime = (ts) =>
   new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+
+// "Today" / "Yesterday" / weekday / date — used for the in-conversation separators.
+function dayLabel(ts) {
+  const d = new Date(ts * 1000);
+  const days = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString([], { weekday: "long" });
+  if (d.getFullYear() === new Date().getFullYear())
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return d.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+}
+
+// Compact stamp for the conversation list: time today, then weekday, then date.
+function fmtListTime(ts) {
+  const d = new Date(ts * 1000);
+  const days = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+  if (days === 0) return fmtTime(ts);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { month: "numeric", day: "numeric" });
+}
+
+// Grow the composer with its content, up to the CSS max-height.
+function autosize(input) {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+}
 const fmtBytes = (n) => {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
-function avatarColor(seed) {
+function senderHue(seed) {
   let h = 0;
   for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return `hsl(${h % 360} 55% 45%)`;
+  return h % 360;
+}
+function avatarColor(seed) {
+  return `hsl(${senderHue(seed)} 55% 45%)`;
 }
 function toast(msg, kind = "info") {
   const t = el("div", { class: `toast toast-${kind}` }, msg);
@@ -90,6 +141,200 @@ function avatarEl(opts, extraClass = "") {
   return node;
 }
 
+// A result row that a keyboard can actually reach and activate.
+function searchItem(label, onActivate, ...children) {
+  return el("div", {
+    class: "search-item", role: "button", tabindex: "0", "aria-label": label,
+    onclick: onActivate,
+    onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(e); } },
+  }, ...children);
+}
+
+// ---------------------------------------------------------------------------
+// Modal controller
+//
+// Every dialog in the app goes through this: it traps Tab inside the open
+// dialog, closes on Escape or a backdrop click, and returns focus to whatever
+// opened it. Dialogs stack, so Escape closes only the topmost one.
+// ---------------------------------------------------------------------------
+const FOCUSABLE =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),' +
+  'textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+let _modalStack = [];
+
+const visibleFocusable = (root) =>
+  [...root.querySelectorAll(FOCUSABLE)].filter((n) => n.offsetParent !== null || n === document.activeElement);
+
+function openModal(id, focusSel) {
+  const modal = typeof id === "string" ? document.getElementById(id) : id;
+  if (!modal) return null;
+  if (_modalStack.includes(modal)) return modal;
+  modal._returnFocus = document.activeElement;
+  modal.hidden = false;
+  _modalStack.push(modal);
+  const first = (focusSel && modal.querySelector(focusSel)) || visibleFocusable(modal)[0];
+  setTimeout(() => { try { first?.focus(); } catch (_) {} }, 0);
+  return modal;
+}
+
+function closeModal(modal) {
+  modal = modal || _modalStack[_modalStack.length - 1];
+  if (!modal) return;
+  const wasOpen = _modalStack.includes(modal);
+  modal.hidden = true;
+  _modalStack = _modalStack.filter((m) => m !== modal);
+  const back = modal._returnFocus;
+  modal._returnFocus = null;
+  // Only restore focus if the element is still in the document.
+  if (back && document.contains(back)) { try { back.focus(); } catch (_) {} }
+  // Lets a dialog that owns a pending promise (askModal) settle and clean up
+  // when it is dismissed by Escape or a backdrop click rather than a button.
+  if (wasOpen) modal.dispatchEvent(new CustomEvent("lattix:dismissed"));
+}
+
+function trapFocus(e, modal) {
+  const f = visibleFocusable(modal);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  else if (!modal.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+}
+
+function closeChatMenu() {
+  const menu = $("#chat-menu");
+  if (!menu || menu.hidden) return false;
+  menu.hidden = true;
+  $("#menu-btn")?.setAttribute("aria-expanded", "false");
+  return true;
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const lb = $(".lightbox");
+    if (lb) { lb.remove(); return; }
+    if (closeChatMenu()) return;
+    if (_modalStack.length) { e.preventDefault(); closeModal(); }
+    return;
+  }
+  if (e.key === "Tab" && _modalStack.length) {
+    trapFocus(e, _modalStack[_modalStack.length - 1]);
+  }
+});
+
+// The .modal element is itself the scrim, so a mousedown landing on it (rather
+// than on .modal-card) is a click outside the dialog.
+document.addEventListener("mousedown", (e) => {
+  if (e.target.classList?.contains("modal")) closeModal(e.target);
+});
+
+// ---------------------------------------------------------------------------
+// askModal — a promise-based replacement for window.confirm / window.prompt.
+//
+// The natives are unstyled, can be suppressed by the browser, block the whole
+// page, and — for prompt() — show a password in clear text with no way to
+// confirm it. This builds the same dialogs out of the app's own components,
+// on the modal controller above (so Escape, focus trap and focus return all
+// come for free).
+//
+// Resolves to: the entered string (when `input` is given), `true` for a plain
+// confirmation, or `null` if the user cancelled.
+// ---------------------------------------------------------------------------
+let _askSeq = 0;
+
+function askModal({
+  title,
+  body = "",
+  confirmText = "Confirm",
+  cancelText = "Cancel",
+  danger = false,
+  input = null,        // { type, label, placeholder, confirmLabel, minLength }
+  requireText = null,  // user must type this exact string to proceed
+}) {
+  return new Promise((resolve) => {
+    const uid = "ask-" + (++_askSeq);
+    const titleId = uid + "-title";
+
+    const field1 = input
+      ? el("input", { type: input.type || "text", placeholder: input.placeholder || "",
+                      autocomplete: "off", id: uid + "-f1" })
+      : null;
+    const field2 = input && input.confirmLabel
+      ? el("input", { type: input.type || "text", placeholder: input.confirmLabel,
+                      autocomplete: "off", id: uid + "-f2" })
+      : null;
+    const guard = requireText
+      ? el("input", { type: "text", placeholder: requireText, autocomplete: "off",
+                      autocapitalize: "none", spellcheck: "false", id: uid + "-g" })
+      : null;
+
+    const err = el("p", { class: "fine err", role: "alert" });
+    const okBtn = el("button", { type: "submit", class: danger ? "btn danger" : "primary" }, confirmText);
+    const cancelBtn = el("button", { type: "button", class: "btn" }, cancelText);
+
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      closeModal(modal);
+      modal.remove();
+      resolve(value);
+    };
+
+    const submit = (e) => {
+      e?.preventDefault();
+      if (guard && guard.value.trim() !== requireText) {
+        err.textContent = `Type “${requireText}” exactly to confirm.`;
+        guard.focus();
+        return;
+      }
+      if (field1) {
+        if (!field1.value) { err.textContent = "This field is required."; field1.focus(); return; }
+        if (input.minLength && field1.value.length < input.minLength) {
+          err.textContent = `Must be at least ${input.minLength} characters.`;
+          field1.focus();
+          return;
+        }
+        if (field2 && field1.value !== field2.value) {
+          err.textContent = "The two entries don't match.";
+          field2.focus();
+          return;
+        }
+      }
+      finish(field1 ? field1.value : true);
+    };
+
+    cancelBtn.onclick = () => finish(null);
+
+    const form = el("form", { autocomplete: "off", onsubmit: submit },
+      body ? el("p", { class: "fine" }, body) : null,
+      input ? el("label", { class: "stacked", for: field1.id }, input.label, field1) : null,
+      field2 ? el("label", { class: "stacked", for: field2.id }, input.confirmLabel, field2) : null,
+      guard ? el("label", { class: "stacked", for: guard.id }, `Type ${requireText} to confirm`, guard) : null,
+      err,
+      el("div", { class: "set-actions end spaced" }, cancelBtn, okBtn));
+
+    const card = el("div", { class: "modal-card" },
+      el("div", { class: "modal-head" },
+        el("h3", { id: titleId }, title),
+        el("button", { type: "button", class: "icon-btn", "aria-label": "Close",
+                       onclick: () => finish(null) }, "✕")),
+      form);
+
+    const modal = el("div", {
+      id: uid, class: "modal", role: "dialog", "aria-modal": "true",
+      "aria-labelledby": titleId, hidden: "",
+    }, card);
+
+    document.body.append(modal);
+    // Escape / backdrop go through the controller, which only hides the node —
+    // watch for that so the promise still settles and the node is cleaned up.
+    modal.addEventListener("lattix:dismissed", () => finish(null));
+    openModal(modal, input || guard ? "input" : "button.btn");
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Persistence helpers
 // ---------------------------------------------------------------------------
@@ -104,6 +349,17 @@ function loadBlocked() {
   catch { return new Set(); }
 }
 const saveBlocked = () => localStorage.setItem(BLOCK_KEY, JSON.stringify([...state.blocked]));
+
+// Drafts survive switching conversations and reloading the tab. They are
+// plaintext in localStorage, same as any unsent text in a textarea, and are
+// cleared on send and by "Delete application data" (which wipes lattix.*).
+const draftKey = (cid) => `lattix.draft.${cid}`;
+const getDraft = (cid) => localStorage.getItem(draftKey(cid)) || "";
+function setDraft(cid, text) {
+  if (!cid) return;
+  if (text && text.trim()) localStorage.setItem(draftKey(cid), text);
+  else localStorage.removeItem(draftKey(cid));
+}
 
 const ttlKey = (cid) => `lattix.ttl.${cid}`;
 const getTtl = (cid) => parseInt(localStorage.getItem(ttlKey(cid)) || "0", 10) || 0;
@@ -134,8 +390,48 @@ function showAuth() {
   $("#create-form").onsubmit = onCreate;
   $("#unlock-form").onsubmit = onUnlock;
   $("#import-form").onsubmit = onImport;
+  wireAuthHelpers();
 
   switchAuthView(loadStoredVault() ? "unlock" : "create");
+}
+
+// A rough, local strength signal — no wordlist, no network. Length dominates
+// because it should: a long passphrase beats a short scramble.
+function scorePassword(pw) {
+  if (pw.length < 8) return 0;
+  let s = 1;
+  if (pw.length >= 12) s++;
+  if (pw.length >= 16) s++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
+  if (/\d/.test(pw) && /[^A-Za-z0-9]/.test(pw)) s++;
+  return Math.min(s, 4);
+}
+const PW_LABEL = ["Very weak", "Weak", "Fair", "Strong", "Very strong"];
+
+function wireAuthHelpers() {
+  const pw = $("#create-password");
+  const pw2 = $("#create-password2");
+
+  pw.addEventListener("input", () => {
+    const s = scorePassword(pw.value);
+    $("#pw-meter").className = "pw-meter s" + s;
+    $("#pw-hint").textContent = pw.value
+      ? `${PW_LABEL[s]} — four or more unrelated words is easy to remember and hard to guess.`
+      : "";
+  });
+
+  // Caps Lock is the classic cause of "my password stopped working".
+  const capsWarn = $("#caps-warn");
+  for (const node of [pw, pw2, $("#unlock-password"), $("#import-password")]) {
+    if (!node) continue;
+    const check = (e) => {
+      const on = typeof e.getModifierState === "function" && e.getModifierState("CapsLock");
+      capsWarn.hidden = !on;
+    };
+    node.addEventListener("keyup", check);
+    node.addEventListener("keydown", check);
+    node.addEventListener("blur", () => { capsWarn.hidden = true; });
+  }
 }
 
 function switchAuthView(name) {
@@ -150,8 +446,34 @@ async function onCreate(e) {
   const btn = $("#create-form button[type=submit]");
   const username = $("#create-username").value.trim().toLowerCase();
   const password = $("#create-password").value;
+  const password2 = $("#create-password2").value;
+
+  // Validate before generating keys: ML-KEM + ML-DSA keygen plus a 250k-round
+  // PBKDF2 seal is seconds of work, and there is no point spending it on a
+  // password the user has already mistyped.
   if (password.length < 8) return toast("Password must be at least 8 characters", "error");
-  btn.disabled = true; btn.textContent = "Setting up your account…";
+  if (password !== password2) {
+    $("#create-password2").focus();
+    return toast("The two passwords don't match", "error");
+  }
+  if (!$("#create-ack").checked) {
+    return toast("Please confirm you understand the password cannot be recovered", "error");
+  }
+
+  // Creating an account overwrites whatever vault this device already holds.
+  // That vault is the only copy of an identity's private keys.
+  if (loadStoredVault()) {
+    const proceed = await askModal({
+      title: "Replace the vault on this device?",
+      body: "This device already holds an encrypted vault. Creating a new account overwrites it, and the " +
+            "old identity's keys are gone unless you exported the vault file first.",
+      confirmText: "Replace vault", danger: true,
+    });
+    if (!proceed) return;
+  }
+
+  btn.disabled = true;
+  btn.classList.add("busy");
   try {
     const identity = await C.generateIdentity();
     identity.username = username;
@@ -166,11 +488,26 @@ async function onCreate(e) {
     storeVault(vault);
     await bootApp(identity);
     toast("Account created. Keep your password safe — it cannot be recovered.", "success");
+    // A vault that exists only in one browser's localStorage is one cache
+    // clear away from gone. Offer the export while it's still on their mind.
+    offerVaultBackup();
   } catch (err) {
     toast(err.message || "Registration failed", "error");
   } finally {
-    btn.disabled = false; btn.textContent = "Create account";
+    btn.disabled = false;
+    btn.classList.remove("busy");
   }
+}
+
+async function offerVaultBackup() {
+  const ok = await askModal({
+    title: "Back up your vault now",
+    body: "Your private keys live only in this browser. Export the encrypted vault file and keep it " +
+          "somewhere safe — it is the only way to restore this identity on another device, or after " +
+          "clearing site data.",
+    confirmText: "Export vault", cancelText: "Later",
+  });
+  if (ok) exportVault();
 }
 
 async function onUnlock(e) {
@@ -179,7 +516,7 @@ async function onUnlock(e) {
   const password = $("#unlock-password").value;
   const vault = loadStoredVault();
   if (!vault) return switchAuthView("create");
-  btn.disabled = true; btn.textContent = "Unlocking…";
+  btn.disabled = true; btn.classList.add("busy");
   try {
     const identity = await C.openVault(vault, password);
     await api.login(identity.username, identity.authSecret);
@@ -187,7 +524,7 @@ async function onUnlock(e) {
   } catch (err) {
     toast(err.message || "Unlock failed", "error");
   } finally {
-    btn.disabled = false; btn.textContent = "Unlock";
+    btn.disabled = false; btn.classList.remove("busy");
   }
 }
 
@@ -197,7 +534,7 @@ async function onImport(e) {
   const file = $("#import-file").files[0];
   const password = $("#import-password").value;
   if (!file) return toast("Choose a vault file", "error");
-  btn.disabled = true; btn.textContent = "Importing…";
+  btn.disabled = true; btn.classList.add("busy");
   try {
     const vault = JSON.parse(await file.text());
     const identity = await C.openVault(vault, password);
@@ -208,7 +545,7 @@ async function onImport(e) {
   } catch (err) {
     toast(err.message || "Import failed", "error");
   } finally {
-    btn.disabled = false; btn.textContent = "Import vault";
+    btn.disabled = false; btn.classList.remove("busy");
   }
 }
 
@@ -236,6 +573,11 @@ async function bootApp(identity) {
      .on("status", (s) => setConnected(s.connected));
   api.connectSocket();
 
+  // Learn this relay's upload ceiling; harmless if an older relay omits it.
+  api.health()
+    .then((h) => { if (h && h.max_file_bytes > 0) MAX_UPLOAD_BYTES = h.max_file_bytes; })
+    .catch(() => {});
+
   const me = await api.me();
   identity.avatar = me.avatar || identity.avatar || null;
   state.peers[identity.username].avatar = identity.avatar;
@@ -243,13 +585,48 @@ async function bootApp(identity) {
 
   for (const c of me.contacts) ensureDmConvo(c);
   for (const g of (me.groups || [])) ensureGroupConvo(g);
+  restoreDraftedConvos();
   renderContacts();
 
-  for (const c of me.contacts) await loadDm(c, { live: false });
-  for (const g of (me.groups || [])) await loadGroup(g.id, { live: false });
+  // Load every conversation's history concurrently. Serially awaiting each
+  // one meant boot time scaled with the number of contacts times the round
+  // trip; allSettled means one slow or failing conversation doesn't hold up
+  // the rest, or abort the boot.
+  await Promise.allSettled([
+    ...me.contacts.map((c) => loadDm(c, { live: false })),
+    ...(me.groups || []).map((g) => loadGroup(g.id, { live: false })),
+  ]);
   renderContacts();
 
   processDeepLink();
+
+  // One periodic sweep handles every disappearing message in every
+  // conversation, however much history is loaded.
+  sweepExpired();
+  setInterval(sweepExpired, EXPIRY_SWEEP_MS);
+  document.addEventListener("visibilitychange", () => {
+    // Timers are throttled in a background tab, so catch up on return.
+    if (!document.hidden) sweepExpired();
+  });
+}
+
+// The relay derives your contact list from envelopes, so a conversation you
+// only ever typed a draft into has no server-side record and would not come
+// back after a reload — leaving the draft stranded in localStorage, invisible
+// and unreachable. Rebuild those rows from the stored drafts.
+function restoreDraftedConvos() {
+  const prefix = "lattix.draft.";
+  for (const key of Object.keys(localStorage)) {
+    if (!key.startsWith(prefix)) continue;
+    const cid = key.slice(prefix.length);
+    if (!localStorage.getItem(key)?.trim()) { localStorage.removeItem(key); continue; }
+    if (state.convos[cid]) continue;
+    // Groups always come back via /api/me; a stale group draft has no metadata
+    // to rebuild from, so drop it rather than inventing an empty group.
+    if (isGroupCid(cid)) { localStorage.removeItem(key); continue; }
+    if (cid === state.identity.username || state.blocked.has(cid)) continue;
+    ensureDmConvo(cid);
+  }
 }
 
 function renderSelf() {
@@ -264,6 +641,9 @@ function setConnected(v) {
   state.connected = v;
   $("#conn-dot").className = "conn-dot " + (v ? "on" : "off");
   $("#conn-label").textContent = v ? "Connected" : "Reconnecting…";
+  const strip = $("#conn-status");
+  strip.classList.toggle("clickable", !v);
+  strip.setAttribute("title", v ? "Connected to the relay" : "Disconnected — click to retry now");
 }
 
 // ---------------------------------------------------------------------------
@@ -275,27 +655,113 @@ function wireAppEvents() {
   $("#share-btn").onclick = openShare;
 
   $("#back-btn").onclick = () => {
+    // Mobile's main way out of a conversation — stash the draft on the way.
+    setDraft(state.current, $("#msg-input").value);
     document.body.classList.remove("chat-open");
     state.current = null;
     renderContacts();
   };
 
+  $("#conn-status").onclick = () => {
+    if (state.connected) return;
+    api.reconnectNow();
+    toast("Reconnecting…");
+  };
+
+  $("#contact-filter").oninput = (e) => {
+    state.filter = e.target.value;
+    renderContacts();
+  };
+  // Escape clears the filter rather than closing anything.
+  $("#contact-filter").onkeydown = (e) => {
+    if (e.key === "Escape" && e.target.value) {
+      e.stopPropagation();
+      e.target.value = "";
+      state.filter = "";
+      renderContacts();
+    }
+  };
+
   $("#new-chat-btn").onclick = () => openUserSearch();
   $("#new-group-btn").onclick = () => openGroupCreate();
-  $("#search-close").onclick = () => ($("#search-modal").hidden = true);
-  $("#fp-close").onclick = () => ($("#fp-modal").hidden = true);
+  $("#empty-new-chat").onclick = () => openUserSearch();
+  $("#empty-share").onclick = () => openShare();
+  $("#search-close").onclick = () => closeModal($("#search-modal"));
+  $("#fp-close").onclick = () => closeModal($("#fp-modal"));
 
   const input = $("#msg-input");
+  // On a phone the on-screen Return key should insert a newline — there is a
+  // send button right there. Only treat Enter as "send" where there's a real
+  // keyboard.
+  const hasPointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendCurrent(); }
+    if (e.key === "Enter" && !e.shiftKey && hasPointer) { e.preventDefault(); sendCurrent(); }
   });
+  let draftTimer;
   input.addEventListener("input", () => {
-    input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 160) + "px";
+    autosize(input);
+    $("#send-btn").disabled = !input.value.trim() || _composerBusy;
+    // Debounced so a fast typist isn't writing to localStorage per keystroke.
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => {
+      const cid = state.current;
+      if (!cid) return;
+      const had = !!getDraft(cid);
+      setDraft(cid, input.value);
+      // Only repaint the list when the marker actually appears or disappears.
+      if (had !== !!input.value.trim()) renderContacts();
+    }, 400);
   });
+  // Don't lose a draft to a reload or a closed tab.
+  window.addEventListener("beforeunload", () => setDraft(state.current, input.value));
+  $("#send-btn").disabled = true;
   $("#send-btn").onclick = sendCurrent;
+
+  // Keep the view pinned to the newest message only when the reader is already
+  // there; otherwise offer an explicit jump.
+  $("#jump-latest").onclick = () => {
+    const wrap = $("#messages");
+    wrap.scrollTo({ top: wrap.scrollHeight, behavior: "smooth" });
+    hideJumpPill();
+  };
+  $("#messages").addEventListener("scroll", () => {
+    const wrap = $("#messages");
+    if (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80) hideJumpPill();
+  });
   $("#attach-btn").onclick = () => $("#file-input").click();
   $("#file-input").onchange = onAttachFile;
+
+  // Drop a file anywhere on the open conversation. dragenter/dragleave fire
+  // for every child element, so count depth rather than toggling on each.
+  const dz = $("#conversation");
+  let dragDepth = 0;
+  const endDrag = () => { dragDepth = 0; dz.classList.remove("dropping"); };
+  dz.addEventListener("dragenter", (e) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    if (++dragDepth === 1) dz.classList.add("dropping");
+  });
+  dz.addEventListener("dragover", (e) => {
+    if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
+  });
+  dz.addEventListener("dragleave", () => { if (--dragDepth <= 0) endDrag(); });
+  dz.addEventListener("drop", (e) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    endDrag();
+    const f = e.dataTransfer.files?.[0];
+    if (f) sendFile(f);
+  });
+
+  // Paste an image straight into the composer.
+  input.addEventListener("paste", (e) => {
+    const item = [...(e.clipboardData?.items || [])].find((i) => i.kind === "file");
+    if (!item) return;                       // ordinary text paste
+    const f = item.getAsFile();
+    if (!f) return;
+    e.preventDefault();
+    sendFile(f);
+  });
   $("#verify-peer-btn").onclick = () => {
     const c = curConvo();
     if (c && c.type === "dm") openFingerprint(c.id);
@@ -303,13 +769,31 @@ function wireAppEvents() {
   };
   $("#menu-btn").onclick = toggleChatMenu;
   document.addEventListener("click", (e) => {
-    if (!$("#chat-menu").hidden && !e.target.closest(".header-actions")) $("#chat-menu").hidden = true;
+    if (!$("#chat-menu").hidden && !e.target.closest(".header-actions")) closeChatMenu();
   });
 
   wireSettings();
   wireGroupModals();
   wireShareModal();
   wireTtlModal();
+  wireShortcuts();
+}
+
+// Global keyboard shortcuts. Deliberately few, and all inert while a dialog is
+// open so they can't fire from inside one.
+function wireShortcuts() {
+  document.addEventListener("keydown", (e) => {
+    if (_modalStack.length) return;
+    if ($("#app-screen").hidden) return;
+    const focused = document.activeElement;
+    const typing = /^(INPUT|TEXTAREA)$/.test(focused?.tagName || "");
+    const mod = e.ctrlKey || e.metaKey;
+
+    if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openUserSearch(); return; }
+    if (mod && e.key.toLowerCase() === "f") { e.preventDefault(); $("#contact-filter")?.focus(); return; }
+    if (e.key === "/" && !typing) { e.preventDefault(); $("#msg-input")?.focus(); return; }
+    if (e.key === "Escape" && typing && focused.id === "msg-input" && !focused.value) focused.blur();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -360,14 +844,42 @@ function lastTs(cid) {
   const m = state.convos[cid]?.messages;
   return m && m.length ? m[m.length - 1].ts : 0;
 }
+// Unread total in the tab title, so a backgrounded Lattix still says something.
+const BASE_TITLE = "Lattix — quantum-resistant messaging";
+function updateUnreadTitle() {
+  const total = Object.values(state.convos)
+    .filter((c) => !(c.type === "dm" && state.blocked.has(c.cid)))
+    .reduce((n, c) => n + (c.unread || 0), 0);
+  document.title = total ? `(${total}) Lattix` : BASE_TITLE;
+}
+
+// Does this conversation match the sidebar filter? Matches the name, and the
+// text of any message already decrypted on this device (the relay can't search
+// — it only ever holds ciphertext).
+function matchesFilter(c, q) {
+  if (!q) return true;
+  const name = (c.type === "group" ? c.meta?.name || "" : c.id).toLowerCase();
+  if (name.includes(q)) return true;
+  return c.messages.some((m) =>
+    (m.text || "").toLowerCase().includes(q) ||
+    (m.file?.filename || "").toLowerCase().includes(q));
+}
+
 function renderContacts() {
   const list = $("#contacts");
   list.innerHTML = "";
-  const cids = Object.keys(state.convos)
-    .filter((cid) => !(state.convos[cid].type === "dm" && state.blocked.has(cid)))
+  const q = (state.filter || "").trim().toLowerCase();
+  const all = Object.keys(state.convos)
+    .filter((cid) => !(state.convos[cid].type === "dm" && state.blocked.has(cid)));
+  const cids = all
+    .filter((cid) => matchesFilter(state.convos[cid], q))
     .sort((a, b) => lastTs(b) - lastTs(a));
+
   if (cids.length === 0) {
-    list.append(el("div", { class: "empty-hint" }, "No conversations yet. Start a chat or group."));
+    list.append(el("div", { class: "empty-hint" },
+      q ? `No conversations match “${state.filter.trim()}”`
+        : "No conversations yet. Start a chat or group."));
+    updateUnreadTitle();
     return;
   }
   for (const cid of cids) {
@@ -382,27 +894,60 @@ function renderContacts() {
     const avatar = c.type === "group"
       ? avatarEl({ name, group: true, icon: c.meta?.icon })
       : avatarEl({ name, avatar: state.peers[c.id]?.avatar });
-    const item = el("div", { class: "contact" + (cid === state.current ? " active" : ""), onclick: () => selectConversation(cid) },
+    // state.online is already maintained from the presence event; surface it
+    // in the list, not just in the open conversation's header.
+    const online = c.type === "dm" && state.online.has(c.id);
+    if (online) avatar.append(el("span", { class: "presence-dot", title: "Online" }));
+    // The live composer wins over the stored value for the open conversation,
+    // so the marker tracks typing without waiting for the debounce.
+    const draft = cid === state.current ? $("#msg-input").value.trim() : getDraft(cid).trim();
+    const open = () => selectConversation(cid);
+    const item = el("div", {
+      class: "contact" + (cid === state.current ? " active" : ""),
+      role: "button", tabindex: "0",
+      "aria-current": cid === state.current ? "true" : null,
+      "aria-label": `${c.type === "group" ? "Group " : ""}${name}` +
+        `${online ? ", online" : ""}${c.unread ? `, ${c.unread} unread` : ""}`,
+      onclick: open,
+      onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } },
+    },
       avatar,
       el("div", { class: "contact-main" },
         el("div", { class: "contact-top" },
           el("span", { class: "contact-name" }, (c.type === "group" ? "👥 " : "") + name),
-          el("span", { class: "contact-time" }, last ? fmtTime(last.ts) : "")),
-        el("div", { class: "contact-preview" }, preview.slice(0, 42))),
+          el("span", { class: "contact-time" }, last ? fmtListTime(last.ts) : "")),
+        // An unsent draft outranks the last message in the preview slot —
+        // it's the thing the user still has to act on.
+        draft
+          ? el("div", { class: "contact-preview draft" }, "✏️ " + draft)
+          : el("div", { class: "contact-preview" }, preview)),
       c.unread ? el("span", { class: "badge" }, String(c.unread)) : null
     );
     list.append(item);
   }
+  updateUnreadTitle();
 }
 
 async function selectConversation(cid) {
+  // Stash whatever was being typed in the conversation we're leaving, and
+  // load whatever was left in the one we're entering.
+  const leaving = state.current;
+  if (leaving && leaving !== cid) setDraft(leaving, $("#msg-input").value);
+
   state.current = cid;
   const c = state.convos[cid];
   c.unread = 0;
+
+  if (leaving !== cid) {
+    const input = $("#msg-input");
+    input.value = getDraft(cid);
+    autosize(input);
+    $("#send-btn").disabled = !input.value.trim();
+  }
   $("#empty-state").hidden = true;
   $("#conversation").hidden = false;
   document.body.classList.add("chat-open");
-  $("#chat-menu").hidden = true;
+  closeChatMenu();
 
   if (c.type === "group") {
     try { await ensureGroupLoaded(c.id); } catch (_) {}
@@ -423,7 +968,7 @@ async function selectConversation(cid) {
     await loadDm(c.id);
   }
   renderContacts();
-  renderMessages();
+  renderMessages({ force: true });
   $("#msg-input").focus();
 }
 
@@ -453,7 +998,6 @@ function pushMessage(convo, msg, key, env, live) {
   convo.maxId = Math.max(convo.maxId, env.id);
   convo.messages.push(msg);
   convo.messages.sort((a, b) => a.id - b.id);
-  scheduleExpiry(convo, key, env);
 
   const mine = msg.from === state.identity.username;
   if (live && !mine) {
@@ -461,21 +1005,33 @@ function pushMessage(convo, msg, key, env, live) {
     playReceived();
     maybeNotify(convo, msg);
   }
-  if (convo.cid === state.current) renderMessages();
-  renderContacts();
+  if (convo.cid === state.current) scheduleMessages();
+  scheduleContacts();
+  // An already-expired message (fetched after its deadline) goes at once;
+  // everything else is handled by the sweep below.
+  if (msg.expires_at && msg.expires_at * 1000 <= Date.now()) sweepExpired();
 }
 
-function scheduleExpiry(convo, key, env) {
-  if (!env.expires_at) return;
-  const ms = env.expires_at * 1000 - Date.now();
-  const remove = () => {
-    convo.messages = convo.messages.filter((m) => msgKeyFor(convo, m) !== key);
-    state.seen.delete(key);
-    if (convo.cid === state.current) renderMessages();
-    renderContacts();
-  };
-  if (ms <= 0) remove();
-  else setTimeout(remove, ms);
+// Disappearing messages used to register a setTimeout per message at ingest
+// time, so every reload re-armed one timer for every message in history. One
+// periodic sweep costs the same regardless of how much history is loaded, and
+// survives the tab being backgrounded (where timers are throttled).
+const EXPIRY_SWEEP_MS = 15000;
+
+function sweepExpired() {
+  const now = Date.now() / 1000;
+  let touchedCurrent = false, touchedAny = false;
+  for (const convo of Object.values(state.convos)) {
+    const expired = convo.messages.filter((m) => m.expires_at && m.expires_at <= now);
+    if (!expired.length) continue;
+    releaseObjectUrls(expired);
+    for (const m of expired) state.seen.delete(msgKeyFor(convo, m));
+    convo.messages = convo.messages.filter((m) => !(m.expires_at && m.expires_at <= now));
+    touchedAny = true;
+    if (convo.cid === state.current) touchedCurrent = true;
+  }
+  if (touchedCurrent) scheduleMessages();
+  if (touchedAny) scheduleContacts();
 }
 const msgKeyFor = (convo, m) => convo.type === "group" ? `g${convo.id}:${m.id}` : `d${m.id}`;
 
@@ -510,16 +1066,19 @@ async function ingestGroup(env, { live = true } = {}) {
 
 async function decodeEnvelope(env, senderKeys, ctx) {
   const me = state.identity.username;
+  // Carried onto every message so the expiry sweep can find them without a
+  // per-message timer.
+  const expires_at = env.expires_at || null;
   try {
     if (env.kind === "message") {
       const { text, verified } = await C.decryptMessage(
         env.payload, me, state.identity.kem.secretKey, senderKeys.dsa_public_key, ctx);
-      return { id: env.id, from: env.sender, ts: env.created_at, kind: "message", text, verified };
+      return { id: env.id, from: env.sender, ts: env.created_at, kind: "message", text, verified, expires_at };
     }
     if (env.kind === "file") {
       const ok = C.verifyFilePayload(env.payload, senderKeys.dsa_public_key, ctx);
       return {
-        id: env.id, from: env.sender, ts: env.created_at, kind: "file", verified: ok,
+        id: env.id, from: env.sender, ts: env.created_at, kind: "file", verified: ok, expires_at,
         file: {
           file_id: env.payload.file_id, filename: env.payload.filename,
           mime: env.payload.mime, size: env.payload.size, payload: env.payload, ctx,
@@ -528,7 +1087,7 @@ async function decodeEnvelope(env, senderKeys, ctx) {
     }
     return null;
   } catch (err) {
-    return { id: env.id, from: env.sender, ts: env.created_at, kind: "error", text: err.message, verified: false };
+    return { id: env.id, from: env.sender, ts: env.created_at, kind: "error", text: err.message, verified: false, expires_at };
   }
 }
 
@@ -563,6 +1122,8 @@ function onPresence({ username, online }) {
     $("#peer-status").textContent = online ? "online" : "offline";
     $("#peer-status").className = "peer-status " + (online ? "online" : "");
   }
+  // Keep the sidebar dots live too.
+  if (state.convos[dmCid(username)]) scheduleContacts();
 }
 
 function maybeNotify(convo, msg) {
@@ -577,32 +1138,190 @@ function maybeNotify(convo, msg) {
 // ---------------------------------------------------------------------------
 // Rendering messages
 // ---------------------------------------------------------------------------
-function renderMessages() {
+// ---------------------------------------------------------------------------
+// Render scheduling
+//
+// Both renders rebuild their container from scratch. Ingesting an envelope
+// used to call each of them directly, so a burst of N messages — a boot that
+// replays history, or a peer sending quickly — meant N full rebuilds. Coalesce
+// into one pass per frame instead. `force` on messages is sticky: if any
+// pending request wanted the view pinned to the newest message, the coalesced
+// render honours that.
+// ---------------------------------------------------------------------------
+const _pendingRender = { msgs: false, contacts: false, force: false };
+
+function scheduleMessages({ force = false } = {}) {
+  _pendingRender.force = _pendingRender.force || force;
+  if (_pendingRender.msgs) return;
+  _pendingRender.msgs = true;
+  requestAnimationFrame(() => {
+    _pendingRender.msgs = false;
+    const f = _pendingRender.force;
+    _pendingRender.force = false;
+    if (curConvo()) renderMessages({ force: f });
+  });
+}
+
+function scheduleContacts() {
+  if (_pendingRender.contacts) return;
+  _pendingRender.contacts = true;
+  requestAnimationFrame(() => {
+    _pendingRender.contacts = false;
+    renderContacts();
+  });
+}
+
+const showJumpPill = () => ($("#jump-latest").hidden = false);
+const hideJumpPill = () => ($("#jump-latest").hidden = true);
+// Message count at the previous render, per conversation — lets us tell "the
+// list grew while you were reading history" from "the list was just redrawn".
+const _renderedCount = {};
+
+// Only the newest slice of a long conversation is in the DOM at any time —
+// rebuilding thousands of bubbles on every render is what makes a busy chat
+// feel slow. Nothing is dropped from state; "load earlier" widens the slice.
+const RENDER_WINDOW = 200;
+const _windowFor = {};
+const windowSize = (cid) => _windowFor[cid] || RENDER_WINDOW;
+
+function renderMessages({ force = false } = {}) {
   const wrap = $("#messages");
+  // Measure before we blow the list away.
+  const wasAtBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80;
+
   wrap.innerHTML = "";
   const c = curConvo();
-  if (!c) return;
+  if (!c) { hideJumpPill(); return; }
   const me = state.identity.username;
+
+  const size = windowSize(c.cid);
+  const hidden = Math.max(0, c.messages.length - size);
+  const shown = hidden ? c.messages.slice(-size) : c.messages;
+  if (hidden) {
+    wrap.append(el("button", {
+      class: "load-earlier",
+      onclick: () => {
+        // Keep the reader's place: note the distance from the bottom, then
+        // restore it once the taller list has rendered.
+        const fromBottom = wrap.scrollHeight - wrap.scrollTop;
+        _windowFor[c.cid] = size + RENDER_WINDOW;
+        renderMessages({ force: false });
+        wrap.scrollTop = wrap.scrollHeight - fromBottom;
+      },
+    }, `Load earlier messages (${hidden} more)`));
+  }
+
   let lastDay = "";
-  for (const m of c.messages) {
-    const day = new Date(m.ts * 1000).toDateString();
-    if (day !== lastDay) { wrap.append(el("div", { class: "day-sep" }, day)); lastDay = day; }
+  for (let i = 0; i < shown.length; i++) {
+    const m = shown[i];
+    const prev = i > 0 ? shown[i - 1] : null;
+    const day = dayLabel(m.ts);
+    const newDay = day !== lastDay;
+    if (newDay) { wrap.append(el("div", { class: "day-sep" }, day)); lastDay = day; }
     const mine = m.from === me;
-    const bubble = el("div", { class: "bubble " + (mine ? "mine" : "theirs") });
-    if (c.type === "group" && !mine) bubble.append(el("div", { class: "msg-sender" }, m.from));
-    if (m.kind === "file") bubble.append(renderFile(m));
+    // True when this message continues an unbroken run from the same sender.
+    // Phase 1 uses this to collapse spacing and hide the repeated sender label.
+    const sameRun = !!prev && !newDay && prev.from === m.from &&
+                    prev.kind !== "error" && m.kind !== "error" &&
+                    (m.ts - prev.ts) < 300;
+    // A signature that failed to verify is the loudest thing this app can say.
+    const failed = m.verified === false && m.kind !== "error";
+    const bubble = el("div", {
+      class: "bubble " + (mine ? "mine" : "theirs") +
+             (failed ? " unverified-msg" : "") + (sameRun ? " same" : ""),
+    });
+    // Colour the sender label by name so a busy group stays scannable. The
+    // lightness comes from the theme so it stays readable on light and dark.
+    if (c.type === "group" && !mine) {
+      bubble.append(el("div", {
+        class: "msg-sender",
+        style: `color: hsl(${senderHue(m.from)} 62% var(--sender-l))`,
+      }, m.from));
+    }
+    if (m.kind === "file") {
+      bubble.append(renderFile(m));
+      // Constrain the bubble to the preview, not to its widest flex line.
+      if (bubble.querySelector(".img-card")) bubble.classList.add("has-image");
+    }
     else if (m.kind === "error") bubble.append(el("div", { class: "msg-error" }, "⚠ " + m.text));
-    else bubble.append(el("div", { class: "msg-text", html: escapeHtml(m.text).replace(/\n/g, "<br>") }));
+    else bubble.append(el("div", { class: "msg-text", html: messageHtml(m.text) }));
     bubble.append(el("div", { class: "msg-meta" },
       m.verified ? el("span", { class: "verified", title: "Signature verified" }, "🔒")
-                 : el("span", { class: "unverified", title: "Not verified" }, "⚠"),
+                 : el("span", { class: "unverified", title: "Signature could not be verified" }, "⚠"),
       " ", fmtTime(m.ts)));
-    wrap.append(el("div", { class: "row " + (mine ? "right" : "left") }, bubble));
+    const row = el("div", {
+      class: "row " + (mine ? "right" : "left") + (sameRun ? " same" : ""),
+    });
+    // In groups, incoming messages get an avatar outside the bubble. Within a
+    // run the slot is kept but hidden, so bubbles stay aligned.
+    if (c.type === "group" && !mine) {
+      row.append(avatarEl(
+        { name: m.from, avatar: state.peers[m.from]?.avatar },
+        "msg-avatar" + (sameRun ? " spacer" : "")));
+    }
+    row.append(bubble);
+    if (m.kind === "message") row.append(messageActions(m));
+    wrap.append(row);
   }
-  wrap.scrollTop = wrap.scrollHeight;
+
+  const grew = c.messages.length > (_renderedCount[c.cid] ?? 0);
+  _renderedCount[c.cid] = c.messages.length;
+
+  if (force || wasAtBottom) {
+    wrap.scrollTop = wrap.scrollHeight;
+    hideJumpPill();
+  } else if (grew) {
+    showJumpPill();
+  }
+}
+
+// Raster formats only — SVG is scriptable and is never previewed inline.
+const PREVIEW_MIME = /^image\/(png|jpeg|gif|webp|avif)$/i;
+const PREVIEW_MAX = 8 * 1024 * 1024;
+const AUTOIMG_KEY = "lattix.autoImages";
+const autoImages = () => localStorage.getItem(AUTOIMG_KEY) !== "0";
+
+// Copy and quote are purely local — neither touches the envelope format, so
+// they work against the existing protocol. A true threaded reply needs a
+// versioned plaintext body; see docs/phase-1-brief.md.
+function messageActions(m) {
+  const quote = () => {
+    const input = $("#msg-input");
+    const quoted = m.text.split("\n").map((l) => "> " + l).join("\n");
+    input.value = quoted + "\n\n" + input.value;
+    autosize(input);
+    $("#send-btn").disabled = !input.value.trim();
+    input.focus();
+  };
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(m.text); toast("Copied"); }
+    catch { toast("Could not copy", "error"); }
+  };
+  return el("div", { class: "msg-actions" },
+    el("button", { class: "msg-act", title: "Copy", "aria-label": "Copy message", onclick: copy }, "⧉"),
+    el("button", { class: "msg-act", title: "Quote", "aria-label": "Quote message", onclick: quote }, "↩"));
 }
 
 function renderFile(m) {
+  // Only ever preview media whose ML-DSA signature verified. A forged or
+  // tampered envelope stays an inert file card the reader must opt into.
+  const previewable =
+    m.verified === true &&
+    PREVIEW_MIME.test(m.file.mime || "") &&
+    m.file.size <= PREVIEW_MAX;
+
+  if (previewable) {
+    const holder = el("div", { class: "img-card" });
+    if (autoImages()) {
+      revealImage(m, holder);
+    } else {
+      holder.append(
+        el("div", { class: "img-placeholder" }, "🖼 " + m.file.filename),
+        el("button", { class: "file-dl", onclick: () => revealImage(m, holder) }, "Show image"));
+    }
+    return holder;
+  }
+
   return el("div", { class: "file-card" },
     el("div", { class: "file-icon" }, "📎"),
     el("div", { class: "file-info" },
@@ -612,17 +1331,70 @@ function renderFile(m) {
   );
 }
 
+async function revealImage(m, holder) {
+  holder.innerHTML = "";
+  holder.append(el("div", { class: "img-placeholder" }, "Decrypting…"));
+  try {
+    const bytes = await fetchDecryptedFile(m);
+    // Re-use the URL across re-renders; releaseObjectUrls() revokes it.
+    if (!m.file._objectUrl) {
+      m.file._objectUrl = URL.createObjectURL(new Blob([bytes], { type: m.file.mime }));
+    }
+    const url = m.file._objectUrl;
+    holder.innerHTML = "";
+    holder.append(
+      el("img", {
+        class: "msg-image", src: url, alt: m.file.filename, loading: "lazy",
+        onclick: () => openLightbox(url, m.file.filename),
+      }),
+      el("div", { class: "img-meta" },
+        el("span", {}, `${m.file.filename} · ${fmtBytes(m.file.size)}`),
+        el("button", {
+          class: "file-dl",
+          onclick: () => download(m.file.filename, bytes, m.file.mime),
+        }, "Save")));
+  } catch (err) {
+    holder.innerHTML = "";
+    holder.append(el("div", { class: "msg-error" },
+      "⚠ " + (err.message || "Could not decrypt image")));
+  }
+}
+
+function openLightbox(url, name) {
+  const box = el("div", { class: "lightbox", onclick: () => box.remove() },
+    el("img", { src: url, alt: name }));
+  document.body.append(box);
+}
+
+// Fetch the ciphertext blob and decrypt it to bytes. Split out from
+// downloadFile() so inline previews can reuse the same path.
+async function fetchDecryptedFile(m) {
+  const cipher = await api.downloadFile(m.file.file_id);
+  const senderKeys = await getPeerKeys(m.from);
+  return C.decryptFile(
+    cipher, m.file.payload, state.identity.username,
+    state.identity.kem.secretKey, senderKeys.dsa_public_key, m.file.ctx || "");
+}
+
 async function downloadFile(m) {
   try {
     toast("Downloading & decrypting…");
-    const cipher = await api.downloadFile(m.file.file_id);
-    const senderKeys = await getPeerKeys(m.from);
-    const plain = await C.decryptFile(
-      cipher, m.file.payload, state.identity.username,
-      state.identity.kem.secretKey, senderKeys.dsa_public_key, m.file.ctx || "");
+    const plain = await fetchDecryptedFile(m);
     download(m.file.filename, plain, m.file.mime || "application/octet-stream");
   } catch (err) {
     toast(err.message || "Download failed", "error");
+  }
+}
+
+// Object URLs created for inline media are owned by the message that made them.
+// Release them whenever those messages are discarded, or the blobs leak for the
+// lifetime of the tab.
+function releaseObjectUrls(messages) {
+  for (const m of messages || []) {
+    if (m.file && m.file._objectUrl) {
+      URL.revokeObjectURL(m.file._objectUrl);
+      m.file._objectUrl = null;
+    }
   }
 }
 
@@ -643,39 +1415,82 @@ const ctxFor = (convo) => (convo.type === "group" ? "g:" + convo.id : "");
 async function sendCurrent() {
   const c = curConvo();
   const input = $("#msg-input");
+  const sendBtn = $("#send-btn");
   const text = input.value.trim();
   if (!text || !c) return;
+
+  // Clear optimistically so typing feels instant, but keep `text` so a failed
+  // send can put the draft back instead of destroying it.
+  input.value = "";
+  autosize(input);
+  sendBtn.disabled = true;
+
   try {
     if (c.type === "group") await ensureGroupLoaded(c.id);
     else await getPeerKeys(c.id);
     const payload = await C.encryptMessage(text, recipientsFor(c), state.identity.dsa.secretKey, ctxFor(c));
-    input.value = ""; input.style.height = "auto";
     const ttl = getTtl(c.cid) || undefined;
     let env;
     if (c.type === "group") env = await api.sendGroupMessage(c.id, { payload, ttl });
     else env = await api.sendMessage({ recipient: c.id, payload, ttl });
     playSent();
+    setDraft(c.cid, "");
     if (c.type === "group") await ingestGroup(env, { live: false });
     else await ingestDm(env, { live: false });
-    renderMessages(); renderContacts();
+    renderMessages({ force: true }); renderContacts();
   } catch (err) {
-    toast(err.message || "Send failed", "error");
+    // Restore the draft. If the user started typing again while the send was in
+    // flight, keep both rather than clobbering the newer text.
+    input.value = input.value ? text + "\n" + input.value : text;
+    autosize(input);
+    // Setting .value programmatically fires no input event, so persist the
+    // restored draft here rather than waiting on the debounced handler.
+    setDraft(c.cid, input.value);
+    toast((err.message || "Send failed") + " — your message is still in the box", "error");
+  } finally {
+    sendBtn.disabled = !input.value.trim();
+    input.focus();
   }
 }
 
-async function onAttachFile(e) {
-  const c = curConvo();
+// Lock the composer while a file is being encrypted and uploaded, and say
+// which stage it's at — encrypting a large file is a long, silent pause.
+let _composerBusy = false;
+function setComposerBusy(busy, label = "") {
+  _composerBusy = busy;
+  const status = $("#composer-status");
+  status.textContent = label;
+  status.hidden = !busy;
+  $("#attach-btn").disabled = busy;
+  $("#send-btn").disabled = busy || !$("#msg-input").value.trim();
+}
+
+function onAttachFile(e) {
   const file = e.target.files[0];
   e.target.value = "";
+  sendFile(file);
+}
+
+async function sendFile(file) {
+  const c = curConvo();
   if (!file || !c) return;
+  if (_composerBusy) return toast("Still sending the previous file…", "error");
+  // Check the size before encrypting — otherwise a large file costs a full
+  // client-side encryption pass only to be rejected with a 413 on upload.
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return toast(
+      `${file.name} is ${fmtBytes(file.size)} — this relay accepts up to ${fmtBytes(MAX_UPLOAD_BYTES)}`,
+      "error");
+  }
   try {
     if (c.type === "group") await ensureGroupLoaded(c.id);
     else await getPeerKeys(c.id);
-    toast(`Encrypting ${file.name}…`);
+    setComposerBusy(true, `Encrypting ${file.name}…`);
     const bytes = new Uint8Array(await file.arrayBuffer());
     const meta = { filename: file.name, mime: file.type || "application/octet-stream", size: bytes.length };
     const { cipherBytes, payload } = await C.encryptFile(
       bytes, meta, recipientsFor(c), state.identity.dsa.secretKey, ctxFor(c));
+    setComposerBusy(true, `Uploading ${fmtBytes(bytes.length)}…`);
     const { file_id } = await api.uploadFile(cipherBytes, bytes.length);
     payload.file_id = file_id;
     const ttl = getTtl(c.cid) || undefined;
@@ -686,10 +1501,12 @@ async function onAttachFile(e) {
     playSent();
     if (c.type === "group") await ingestGroup(env, { live: false });
     else await ingestDm(env, { live: false });
-    renderMessages(); renderContacts();
+    renderMessages({ force: true }); renderContacts();
     toast("File sent (encrypted)", "success");
   } catch (err) {
     toast(err.message || "File send failed", "error");
+  } finally {
+    setComposerBusy(false);
   }
 }
 
@@ -699,19 +1516,21 @@ async function onAttachFile(e) {
 function toggleChatMenu(e) {
   e.stopPropagation();
   const menu = $("#chat-menu");
-  if (!menu.hidden) { menu.hidden = true; return; }
+  if (!menu.hidden) { closeChatMenu(); return; }
   const c = curConvo();
   if (!c) return;
   menu.innerHTML = "";
-  menu.append(el("button", { onclick: () => { menu.hidden = true; openTtl(c); } }, "⏲ Disappearing messages"));
+  menu.append(el("button", { role: "menuitem", onclick: () => { closeChatMenu(); openTtl(c); } }, "⏲ Disappearing messages"));
   if (c.type === "dm") {
     const blocked = state.blocked.has(c.id);
-    menu.append(el("button", { class: blocked ? "" : "danger", onclick: () => { menu.hidden = true; blocked ? unblockUser(c.id) : blockUser(c.id); } },
+    menu.append(el("button", { role: "menuitem", class: blocked ? "" : "danger", onclick: () => { closeChatMenu(); blocked ? unblockUser(c.id) : blockUser(c.id); } },
       blocked ? "✔ Unblock user" : "🚫 Block user"));
   } else {
-    menu.append(el("button", { onclick: () => { menu.hidden = true; openGroupInfo(c); } }, "👥 Group info"));
+    menu.append(el("button", { role: "menuitem", onclick: () => { closeChatMenu(); openGroupInfo(c); } }, "👥 Group info"));
   }
   menu.hidden = false;
+  $("#menu-btn").setAttribute("aria-expanded", "true");
+  visibleFocusable(menu)[0]?.focus();
 }
 
 function blockUser(u) {
@@ -740,16 +1559,20 @@ function openTtl(convo) {
   grid.innerHTML = "";
   const cur = getTtl(convo.cid);
   for (const o of TTL_OPTIONS) {
-    grid.append(el("button", { class: "ttl-opt" + (o.v === cur ? " active" : ""), onclick: () => {
-      setTtlPref(convo.cid, o.v);
-      $("#ttl-modal").hidden = true;
-      toast(o.v ? `Disappearing messages: ${o.label}` : "Disappearing messages off");
-    } }, o.label));
+    grid.append(el("button", {
+      class: "ttl-opt" + (o.v === cur ? " active" : ""),
+      role: "radio", "aria-checked": String(o.v === cur),
+      onclick: () => {
+        setTtlPref(convo.cid, o.v);
+        closeModal($("#ttl-modal"));
+        toast(o.v ? `Disappearing messages: ${o.label}` : "Disappearing messages off");
+      },
+    }, o.label));
   }
-  $("#ttl-modal").hidden = false;
+  openModal("ttl-modal", ".ttl-opt");
 }
 function wireTtlModal() {
-  $("#ttl-close").onclick = () => ($("#ttl-modal").hidden = true);
+  $("#ttl-close").onclick = () => closeModal($("#ttl-modal"));
 }
 
 // ---------------------------------------------------------------------------
@@ -757,9 +1580,9 @@ function wireTtlModal() {
 // ---------------------------------------------------------------------------
 function openUserSearch() {
   const modal = $("#search-modal");
-  modal.hidden = false;
   const input = $("#search-input");
-  input.value = ""; $("#search-results").innerHTML = ""; input.focus();
+  input.value = ""; $("#search-results").innerHTML = "";
+  openModal(modal, "#search-input");
   let timer;
   input.oninput = () => {
     clearTimeout(timer);
@@ -771,9 +1594,9 @@ function openUserSearch() {
         const box = $("#search-results"); box.innerHTML = "";
         if (!results.length) { box.append(el("div", { class: "empty-hint" }, "No users found")); return; }
         for (const r of results) {
-          box.append(el("div", { class: "search-item", onclick: () => {
-            modal.hidden = true; ensureDmConvo(r.username); selectConversation(dmCid(r.username));
-          } },
+          box.append(searchItem(`Start a chat with ${r.username}`, () => {
+            closeModal(modal); ensureDmConvo(r.username); selectConversation(dmCid(r.username));
+          },
             avatarEl({ name: r.username, avatar: r.avatar }),
             el("div", {},
               el("div", { class: "contact-name" }, r.username),
@@ -802,7 +1625,7 @@ async function openFingerprint(username) {
   $("#fp-hint").textContent = username === state.identity.username
     ? "Share this with contacts so they can confirm they're talking to you."
     : "Compare this with the value shown on their device. If it matches, the channel is authentic and free of a man-in-the-middle.";
-  modal.hidden = false;
+  openModal(modal, "#fp-close");
 }
 
 // ---------------------------------------------------------------------------
@@ -815,8 +1638,7 @@ function openGroupCreate() {
   $("#group-member-search").value = "";
   $("#group-member-results").innerHTML = "";
   renderGroupChips();
-  $("#group-modal").hidden = false;
-  setTimeout(() => $("#group-name").focus(), 0);
+  openModal("group-modal", "#group-name");
 }
 function renderGroupChips() {
   const box = $("#group-members-chips"); box.innerHTML = "";
@@ -826,7 +1648,7 @@ function renderGroupChips() {
   }
 }
 function wireGroupModals() {
-  $("#group-close").onclick = () => ($("#group-modal").hidden = true);
+  $("#group-close").onclick = () => closeModal($("#group-modal"));
   let timer;
   $("#group-member-search").oninput = (e) => {
     clearTimeout(timer);
@@ -837,10 +1659,11 @@ function wireGroupModals() {
       try {
         const results = await api.searchUsers(q);
         for (const r of results) {
-          box.append(el("div", { class: "search-item", onclick: () => {
+          box.append(searchItem(`Add ${r.username} to the group`, () => {
             _newGroupMembers.set(r.username, r); renderGroupChips();
             $("#group-member-search").value = ""; box.innerHTML = "";
-          } }, avatarEl({ name: r.username, avatar: r.avatar }),
+            $("#group-member-search").focus();
+          }, avatarEl({ name: r.username, avatar: r.avatar }),
              el("div", { class: "contact-name" }, r.username)));
         }
       } catch (_) {}
@@ -853,21 +1676,26 @@ function wireGroupModals() {
     try {
       const group = await api.createGroup({ name, icon, members: [..._newGroupMembers.keys()] });
       ensureGroupConvo(group);
-      $("#group-modal").hidden = true;
+      closeModal($("#group-modal"));
       await selectConversation(groupCid(group.id));
       renderContacts();
       toast("Group created", "success");
     } catch (err) { toast(err.message || "Could not create group", "error"); }
   };
 
-  $("#gi-close").onclick = () => ($("#groupinfo-modal").hidden = true);
+  $("#gi-close").onclick = () => closeModal($("#groupinfo-modal"));
   $("#gi-leave").onclick = async () => {
     const c = curConvo(); if (!c || c.type !== "group") return;
-    if (!confirm(`Leave “${c.meta.name}”?`)) return;
+    const ok = await askModal({
+      title: "Leave group",
+      body: `You'll stop receiving messages in “${c.meta.name}”. Messages already on this device stay here.`,
+      confirmText: "Leave group", danger: true,
+    });
+    if (!ok) return;
     try {
       await api.removeGroupMember(c.id, state.identity.username);
       delete state.convos[groupCid(c.id)];
-      state.current = null; $("#groupinfo-modal").hidden = true;
+      state.current = null; closeModal($("#groupinfo-modal"));
       $("#conversation").hidden = true; $("#empty-state").hidden = false;
       document.body.classList.remove("chat-open");
       renderContacts();
@@ -905,14 +1733,14 @@ async function openGroupInfo(convo) {
         if (!q) return;
         const results = await api.searchUsers(q).catch(() => []);
         for (const r of results) {
-          rbox.append(el("div", { class: "search-item", onclick: async () => {
+          rbox.append(searchItem(`Add ${r.username} to the group`, async () => {
             try { await api.addGroupMember(g.id, r.username); await openGroupInfo(convo); } catch (err) { toast(err.message, "error"); }
-          } }, avatarEl({ name: r.username, avatar: r.avatar }), el("div", { class: "contact-name" }, r.username)));
+          }, avatarEl({ name: r.username, avatar: r.avatar }), el("div", { class: "contact-name" }, r.username)));
         }
       }, 220);
     };
   }
-  $("#groupinfo-modal").hidden = false;
+  openModal("groupinfo-modal");
 }
 
 // ---------------------------------------------------------------------------
@@ -923,7 +1751,7 @@ function myShareUrl() {
   return `${shareOrigin()}/#add=${encodeURIComponent(id.username)}&fp=${id.fingerprint}`;
 }
 function wireShareModal() {
-  $("#share-close").onclick = () => ($("#share-modal").hidden = true);
+  $("#share-close").onclick = () => closeModal($("#share-modal"));
   $("#share-copy").onclick = async () => {
     try { await navigator.clipboard.writeText($("#share-url-input").value); toast("Link copied", "success"); }
     catch { $("#share-url-input").select(); document.execCommand("copy"); toast("Link copied", "success"); }
@@ -933,7 +1761,7 @@ function openShare() {
   const url = myShareUrl();
   $("#share-url-input").value = url;
   drawQr($("#qr-canvas"), url);
-  $("#share-modal").hidden = false;
+  openModal("share-modal", "#share-copy");
 }
 function drawQr(canvas, text) {
   const qr = encodeText(text, ECC.MEDIUM);
@@ -972,7 +1800,7 @@ function processDeepLink() {
 // Settings
 // ---------------------------------------------------------------------------
 function wireSettings() {
-  $("#settings-close").onclick = () => ($("#settings-modal").hidden = true);
+  $("#settings-close").onclick = () => closeModal($("#settings-modal"));
 
   $$("#theme-choices .choice").forEach((btn) => {
     btn.onclick = () => { applyTheme(btn.dataset.theme); refreshSettingsUi(); };
@@ -988,6 +1816,11 @@ function wireSettings() {
       if (!ok) { e.target.checked = false; toast("Notifications permission denied", "error"); return; }
       localStorage.setItem(NOTIFY_KEY, "1");
     } else localStorage.setItem(NOTIFY_KEY, "0");
+  };
+
+  $("#toggle-autoimg").onchange = (e) => {
+    localStorage.setItem(AUTOIMG_KEY, e.target.checked ? "1" : "0");
+    if (curConvo()) renderMessages({ force: false });
   };
 
   $("#avatar-upload-btn").onclick = () => $("#avatar-file").click();
@@ -1007,14 +1840,23 @@ function wireSettings() {
   $("#delete-data-btn").onclick = deleteAppData;
 }
 
-function openSettings() { refreshSettingsUi(); $("#settings-modal").hidden = false; }
+function openSettings() { refreshSettingsUi(); openModal("settings-modal", "#theme-choices .choice"); }
 
 function refreshSettingsUi() {
   const theme = currentTheme(), color = currentChatColor();
-  $$("#theme-choices .choice").forEach((b) => b.classList.toggle("active", b.dataset.theme === theme));
-  $$("#chat-swatches .swatch").forEach((s) => s.classList.toggle("active", s.dataset.c === color));
+  $$("#theme-choices .choice").forEach((b) => {
+    const on = b.dataset.theme === theme;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", String(on));
+  });
+  $$("#chat-swatches .swatch").forEach((s) => {
+    const on = s.dataset.c === color;
+    s.classList.toggle("active", on);
+    s.setAttribute("aria-checked", String(on));
+  });
   $("#toggle-sounds").checked = soundsEnabled();
   $("#toggle-notify").checked = localStorage.getItem(NOTIFY_KEY) === "1";
+  $("#toggle-autoimg").checked = autoImages();
   fillAvatar($("#avatar-preview"), { name: state.identity.username, avatar: state.identity.avatar });
   $("#server-section").hidden = !isExtension();
   if (isExtension()) $("#server-url").value = getServerUrl();
@@ -1096,7 +1938,16 @@ function exportChatJson() {
 }
 
 async function makeBackup() {
-  const password = prompt("Choose a password to encrypt this backup:");
+  const password = await askModal({
+    title: "Encrypt this backup",
+    body: "The file is sealed with PBKDF2 + AES-GCM. There is no recovery if you forget this password.",
+    input: {
+      type: "password", label: "Backup password",
+      placeholder: "At least 8 characters", confirmLabel: "Repeat password",
+      minLength: 8,
+    },
+    confirmText: "Create backup",
+  });
   if (!password) return;
   try {
     const data = {
@@ -1113,7 +1964,15 @@ async function makeBackup() {
 async function onRestoreChosen(e) {
   const file = e.target.files[0]; e.target.value = "";
   if (!file) return;
-  const password = prompt("Backup password:");
+  const password = await askModal({
+    title: "Restore backup",
+    body: `Decrypting ${file.name}. Restored messages are merged into this device's history.`,
+    input: {
+      type: "password", label: "Backup password",
+      placeholder: "The password used when the backup was made",
+    },
+    confirmText: "Restore",
+  });
   if (!password) return;
   try {
     const sealed = JSON.parse(await file.text());
@@ -1149,7 +2008,15 @@ function exportVault() {
 }
 
 async function deleteAppData() {
-  if (!confirm("Delete ALL Lattix data on this device AND your account on the server? This cannot be undone.")) return;
+  const ok = await askModal({
+    title: "Delete all Lattix data",
+    body: "This erases this device's vault, chats and settings, and deletes your account on the relay. " +
+          "Your private keys cannot be recovered afterwards — export your vault first if you may want this " +
+          "identity back.",
+    requireText: state.identity.username,
+    confirmText: "Delete everything", danger: true,
+  });
+  if (!ok) return;
   try { await api.deleteAccount(); } catch (_) {}
   try { await api.logout(); } catch (_) {}
   Object.keys(localStorage).filter((k) => k.startsWith("lattix.")).forEach((k) => localStorage.removeItem(k));

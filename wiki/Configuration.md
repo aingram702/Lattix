@@ -27,7 +27,15 @@ These are not env-configurable but are worth knowing:
 - **Message payload cap:** ~2 MB of JSON (file *contents* go through
   `/api/files`, not the message payload).
 - **Disappearing-message timers:** Off / 30 s / 5 min / 1 h / 1 day / 1 week
-  (client), bounded to ≤ 4 weeks server-side.
+  (client), bounded to ≤ 4 weeks server-side. Expiry is applied by a periodic
+  client-side sweep and a background server sweep.
+- **Message render window:** the most recent 200 messages are kept in the DOM;
+  older ones load on demand via **Load earlier** (client-side only — nothing is
+  dropped from memory or from the server).
+- **Inline image previews:** limited to image MIME types under a fixed size cap,
+  and only for messages whose signature verified. Off by default
+  (**Settings → Media**).
+- **WebSocket reconnect:** exponential backoff, factor 1.6, capped at 20 s.
 
 ## Where data is stored
 
@@ -37,9 +45,10 @@ These are not env-configurable but are worth knowing:
   `%LOCALAPPDATA%\Lattix` (Windows),
   `~/Library/Application Support/Lattix` (macOS),
   `~/.local/share/lattix` (Linux).
-- **Client:** your encrypted vault and UI preferences live in the browser's
-  `localStorage` (keys prefixed `lattix.`). "Delete application data" clears
-  them.
+- **Client:** your encrypted vault, decrypted chat cache, UI preferences, and
+  unsent **drafts** live in the browser's `localStorage` (keys prefixed
+  `lattix.`, drafts under `lattix.draft.*`). "Delete application data" clears
+  them all.
 
 See [Self-Hosting & Deployment](Self-Hosting-and-Deployment) for how these map
 onto Docker, Render, and Fly.

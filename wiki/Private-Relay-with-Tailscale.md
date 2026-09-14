@@ -38,7 +38,7 @@ persistent database. Pick one:
 
 ```bash
 git clone https://github.com/aingram702/Lattix.git
-cd Lattix/Lattix
+cd Lattix
 docker build -t lattix .
 docker run -d --name lattix --restart unless-stopped \
   -p 127.0.0.1:8000:8000 \
@@ -64,7 +64,7 @@ restarts on boot. It binds `127.0.0.1:8000` by default.
 
 ```bash
 curl http://127.0.0.1:8000/api/health
-# -> {"status":"ok","version":"1.1.0"}
+# -> {"status":"ok","version":"2.0.0","max_file_bytes":52428800}
 ```
 
 ---

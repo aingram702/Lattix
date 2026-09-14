@@ -26,11 +26,28 @@ MV3 extension). Key modules:
 | `js/app.js` | UI, conversation state, ingestion/decryption, all feature logic. |
 | `js/api.js` | REST + WebSocket client (transports only ciphertext). |
 | `js/config.js` | Runtime config (relay URL, used by the extension). |
+| `js/preload.js` | Applies the stored theme before the first paint. Must stay a *separate file* — MV3's CSP forbids inline script, so the usual inline anti-flash snippet isn't available. |
 | `js/theme.js`, `js/sound.js`, `js/qr.js` | Theming, notification tones, offline QR generator. |
 | `vendor/lattix-pqc.js` | Vendored, offline build of `@noble/post-quantum`. |
 
 Private keys live only in memory after the encrypted **vault** is unlocked; the
 vault (and encrypted backups) are sealed with your password.
+
+### Rendering
+
+`app.js` holds decrypted conversation state in memory and renders from it. Two
+properties keep that affordable as a history grows:
+
+- **Renders are batched.** `scheduleMessages()` / `scheduleContacts()` coalesce
+  into a single `requestAnimationFrame` callback, so a burst of envelopes — boot
+  replay above all — costs one render pass, not one per envelope. Unbatched, boot
+  is quadratic in history length.
+- **The message list is windowed.** Only the most recent *N* messages are in the
+  DOM; a **Load earlier** control widens the window and preserves scroll position.
+  Nothing is dropped from state — only from the document.
+
+Disappearing messages are removed by a single periodic **sweep** over state rather
+than one `setTimeout` registered per message at ingest.
 
 ## Server
 
@@ -53,6 +70,11 @@ Three things are kept in the server process, not a shared store:
 - **WebSocket connections** — the map of who is online, used to push envelopes.
 - **Rate-limiter buckets** — per-IP sliding windows for `/api/register` and
   `/api/login`.
+
+Because the connection map is what presence is derived from, the relay sends each
+client a **presence snapshot** on connect (contacts already online) and refreshes
+presence for both parties on envelope delivery — a first message is what makes two
+users contacts, and that produces no connect transition of its own.
 
 This keeps the relay simple and dependency-free, but it means Lattix must run as
 **exactly one instance**. A second replica wouldn't share sessions and couldn't
@@ -91,7 +113,7 @@ single `/data` volume is all that's needed for durability.
 ## Project layout
 
 ```
-Lattix/
+Lattix/                        # repository root
 ├── run.py                     # launcher (uvicorn wrapper)
 ├── requirements.txt
 ├── Dockerfile, Procfile       # hosting
@@ -101,5 +123,6 @@ Lattix/
 ├── client/                    # single-page app (also a Chrome extension)
 │   ├── index.html  css/  js/  vendor/  icons/  manifest.json  background.js
 ├── installer/                 # Windows / macOS / Linux installer builds
-└── scripts/                   # vendor build + integration test
+└── scripts/                   # vendor build, protocol test, nine browser UI suites
+    └── lib/harness.mjs        #   shared signup/unlock test helpers
 ```

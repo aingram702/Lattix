@@ -41,10 +41,10 @@ installer/linux/build.sh            # -> installer/linux/Output/Lattix-<ver>-<ar
 **Install / uninstall:**
 
 ```bash
-chmod +x Lattix-1.1.0-x86_64.run
-./Lattix-1.1.0-x86_64.run           # per-user (or system-wide if run as root)
-./Lattix-1.1.0-x86_64.run --user    # force per-user even as root
-./Lattix-1.1.0-x86_64.run --uninstall
+chmod +x Lattix-2.0.0-x86_64.run
+./Lattix-2.0.0-x86_64.run           # per-user (or system-wide if run as root)
+./Lattix-2.0.0-x86_64.run --user    # force per-user even as root
+./Lattix-2.0.0-x86_64.run --uninstall
 ```
 
 ---
@@ -84,7 +84,7 @@ builds the installer on a `windows-latest` runner.
 
 - **On demand:** GitHub → *Actions* → *Build Windows installer* → *Run
   workflow*. Download `LattixSetup.exe` from the run's *Artifacts*.
-- **On release:** push a tag like `v1.1.0`; the installer is built and attached
+- **On release:** push a tag like `v2.0.0`; the installer is built and attached
   to the GitHub Release automatically.
 
 ### Build locally on Windows

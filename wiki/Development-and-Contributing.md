@@ -2,32 +2,69 @@
 
 ## Repository layout
 
-The app lives in the repo's `Lattix/` subfolder (see [Architecture](Architecture)
+The application lives at the repository root (see [Architecture](Architecture)
 for the full tree). Backend is Python (FastAPI); the frontend is dependency-free
 vanilla JS.
 
 ## Run locally
 
 ```bash
-cd Lattix/Lattix
+cd Lattix
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python run.py --reload        # http://localhost:8000, auto-reload
 ```
 
-## End-to-end test suite
+## Test suites
 
-`scripts/integration_test.mjs` exercises the real server with the real client
-crypto module: registration, login, the key directory, encrypted messaging,
-plaintext-leak checks, sender self-decryption, tamper rejection, the
-encrypted-file round-trip, and live WebSocket delivery.
+`scripts/` holds **ten suites, 234 assertions**: one protocol suite driving the
+real server with the real crypto module, and nine browser suites driving the real
+UI in headless Chromium (Playwright + axe-core).
+
+| Suite | Covers |
+|---|---|
+| `integration_test.mjs` | Protocol: registration, login, the key directory, encrypted messaging, plaintext-leak checks, sender self-decryption, tamper rejection, the encrypted-file round-trip, live WebSocket delivery. |
+| `ui_test.mjs` | Rendering, grouping, date separators, scroll anchoring, failed-send recovery. |
+| `ui_test_media.mjs` | Encrypted image round-trip, inline previews, lightbox, group rendering. |
+| `ui_test_a11y.mjs` | axe-core WCAG 2.1 A/AA across every theme, plus a keyboard-only walkthrough. |
+| `ui_test_dialogs.mjs` | The dialog controller, and a real encrypted backup/restore round-trip. |
+| `ui_test_composer.mjs` | Drag-drop, clipboard paste, drafts, the send-busy lock. |
+| `ui_test_sidebar.mjs` | Conversation filter, presence, unread title, reconnect backoff. |
+| `ui_test_auth.mjs` | Signup guards, strength meter, vault-overwrite warning. |
+| `ui_test_theme.mjs` | System theme, the anti-flash bootstrap, light-mode contrast. |
+| `ui_test_perf.mjs` | Render batching, the render window, the expiry sweep. |
 
 ```bash
-# terminal 1 — start a server on a test port
-python run.py --no-browser --port 8111
-# terminal 2 — run the suite against it (needs Node.js)
-node scripts/integration_test.mjs        # uses LATTIX_BASE, defaults to :8111
+pip install -r requirements.txt
+npm i -D playwright axe-core && npx playwright install chromium
+
+# terminal 1 — a server on a test port
+LATTIX_DB=/tmp/lattix-test.db python run.py --no-browser --port 8111
+# terminal 2 — a suite against it (LATTIX_BASE defaults to :8111)
+LATTIX_BASE=http://127.0.0.1:8111 node scripts/integration_test.mjs
+LATTIX_BASE=http://127.0.0.1:8111 node scripts/ui_test.mjs
 ```
+
+> **Give each suite a fresh relay and database.** `/api/register` is rate-limited
+> per IP and the buckets live in the server process, so consecutive runs against
+> one relay start returning `429`. Restarting the relay clears them.
+
+`scripts/lib/harness.mjs` holds the shared signup/unlock helpers. `PW_CHROMIUM`
+overrides the browser binary if Playwright's download isn't usable.
+
+### Writing UI tests
+
+The browser suites assert **behaviour** — what the DOM does, what axe-core
+reports, how many render passes a boot costs — not screenshots, so they stay
+meaningful on a loaded CI box.
+
+A handful of things are deliberately *not* driven through the real path, and each
+is commented in the suite so nobody "fixes" it later: CDP can't set the OS Caps
+Lock state; `setOffline` doesn't close an established WebSocket in Chromium;
+`minlength` blocks submit before the JS guard runs; `:focus-visible` styling only
+engages for real keyboard focus in headless Chromium; and render batching is
+measured at boot replay rather than from a live trickle, since envelopes arriving
+seconds apart legitimately render once each.
 
 ## Rebuilding the vendored crypto bundle
 
@@ -43,7 +80,7 @@ bash scripts/build_vendor.sh
 Per-OS installer builds live under `installer/` (Windows/macOS/Linux) with a
 one-command build script each and matching GitHub Actions workflows. See
 [Desktop Apps & Extension](Desktop-Apps-and-Extension) and
-[`installer/README.md`](https://github.com/aingram702/Lattix/blob/main/Lattix/installer/README.md).
+[`installer/README.md`](https://github.com/aingram702/Lattix/blob/main/installer/README.md).
 
 ## Continuous integration
 
@@ -63,13 +100,22 @@ local toolchain.
   New signed data must be covered by the signature transcript.
 - **Frontend:** no external runtime dependencies or CDNs — the app must keep
   working fully offline. Render user-controlled text through the existing
-  escaping helpers.
+  escaping helpers. **No inline `<script>` or inline `style` attributes** — the
+  client also ships as an MV3 extension, whose CSP forbids them; use a class or a
+  separate file. Batch DOM updates through `scheduleMessages()` /
+  `scheduleContacts()` rather than calling the render functions directly.
+- **Accessibility:** new interactive elements need a role, an accessible name, and
+  keyboard operation; new dialogs go through the shared modal controller so they
+  inherit the focus trap, <kbd>Esc</kbd>, and focus return. Never use
+  `window.confirm`/`prompt` — use `askModal`. Run `ui_test_a11y.mjs` before
+  opening a PR.
 
 ## Submitting changes
 
 1. Fork and branch from the default branch.
-2. Make the change and run the integration suite (and, for UI changes, click
-   through the affected flows).
+2. Make the change and run the suites — the protocol suite always, plus the
+   browser suites covering what you touched (and `ui_test_a11y.mjs` for anything
+   that adds or changes a control).
 3. Open a pull request describing what changed and why. For anything
    security-relevant, call it out explicitly.
 

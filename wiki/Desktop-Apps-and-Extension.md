@@ -48,10 +48,10 @@ is stored per-user (see [Configuration](Configuration)).
 ### Linux `.run` install / uninstall
 
 ```bash
-chmod +x Lattix-1.1.0-x86_64.run
-./Lattix-1.1.0-x86_64.run           # per-user, or system-wide if run as root
-./Lattix-1.1.0-x86_64.run --user    # force per-user even as root
-./Lattix-1.1.0-x86_64.run --uninstall
+chmod +x Lattix-2.0.0-x86_64.run
+./Lattix-2.0.0-x86_64.run           # per-user, or system-wide if run as root
+./Lattix-2.0.0-x86_64.run --user    # force per-user even as root
+./Lattix-2.0.0-x86_64.run --uninstall
 ```
 
 ### macOS note
@@ -60,7 +60,7 @@ The app is not code-signed, so the first launch needs a right-click → **Open**
 (or *System Settings → Privacy & Security → Open Anyway*).
 
 For the full breakdown of the packaging scripts, see
-[`installer/README.md`](https://github.com/aingram702/Lattix/blob/main/Lattix/installer/README.md).
+[`installer/README.md`](https://github.com/aingram702/Lattix/blob/main/installer/README.md).
 
 ## Which should I use?
 

@@ -19,7 +19,7 @@ Requires **Python 3.10+**.
 
 ```bash
 git clone https://github.com/aingram702/Lattix.git
-cd Lattix/Lattix                   # the app lives in the repo's Lattix/ subfolder
+cd Lattix
 
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
@@ -81,6 +81,12 @@ See [Desktop Apps & Extension](Desktop-Apps-and-Extension) for details.
    your password. The server only receives your *public* keys.
    > Your password cannot be recovered. If you lose it, you lose the vault on
    > that device — export a backup (below) to be safe.
+
+   Because that's irreversible, the form makes you confirm the password, shows a
+   strength meter, warns you if Caps Lock is on, asks you to tick an
+   acknowledgement that it can't be recovered, and warns before overwriting a
+   vault that already exists on the device. Take the encrypted backup it offers
+   on first run.
 2. **Unlock** — on a device that already has a vault, you just enter your
    password.
 3. **Import a vault** — move your identity to a new device with an exported
@@ -88,12 +94,25 @@ See [Desktop Apps & Extension](Desktop-Apps-and-Extension) for details.
 
 ## Starting a conversation
 
-- **New chat:** click **+ New chat**, search a username, and message them.
+- **New chat:** click **+ New chat** (or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd>),
+  search a username, and message them.
 - **New group:** click **👥 New group**, name it, add members, create.
 - **Verify a contact:** open a chat's **Verify** dialog and compare the
   **safety code** with what your contact sees on their device. Matching codes
   mean the channel is authentic (no man-in-the-middle). This is the one manual
   step that upgrades "encrypted" to "encrypted *and* verified" — see
   [Security & Trust Model](Security-and-Trust-Model).
+
+## Finding your way around
+
+- The **conversation list** on the left has a search box
+  (<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>F</kbd>) and a dot showing who's online.
+- <kbd>/</kbd> jumps to the message box, <kbd>Enter</kbd> sends,
+  <kbd>Shift</kbd>+<kbd>Enter</kbd> makes a newline, <kbd>Esc</kbd> closes
+  whatever's open. The full list is in **Settings → Keyboard**.
+- Attach a file with 📎, by **dragging it onto the conversation**, or by
+  **pasting an image** from the clipboard.
+- **Settings → Theme** includes **System**, which follows your OS light/dark
+  setting live.
 
 Next: the full [Features](Features) tour.

@@ -128,8 +128,22 @@ After connecting you receive JSON events:
 Send any text (e.g. `"ping"`) to keep the socket alive. Presence is sent only to
 your contacts.
 
+**Presence snapshot (2.0).** On connect the relay immediately sends one
+`presence` event per contact who is *already* online, then continues to send
+events on transitions as before. It also refreshes presence for both parties when
+an envelope is delivered — a first message is what makes two users contacts, and
+that produces no connect transition of its own. Without the snapshot a client
+learned nothing about contacts already connected, so everyone showed as offline
+after a reload.
+
 ### `GET /api/health`
-→ `{ "status": "ok", "version": "1.1.0" }` (no auth) — for load-balancer probes.
+→ (no auth) — for load-balancer probes:
+```json
+{ "status": "ok", "version": "2.0.0", "max_file_bytes": 52428800 }
+```
+`max_file_bytes` (added in 2.0) is `LATTIX_MAX_FILE_MB` in bytes. The client reads
+it at boot so it can reject an oversized attachment *before* encrypting it, rather
+than doing the work and then taking a `413`. Older clients ignore the field.
 
 ---
 

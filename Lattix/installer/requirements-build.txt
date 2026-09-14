@@ -1,3 +1,0 @@
-# Build-time dependencies for producing the Windows installer.
-# (Runtime deps come from ../requirements.txt.)
-pyinstaller==6.11.1

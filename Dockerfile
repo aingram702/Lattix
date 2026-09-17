@@ -35,4 +35,9 @@ EXPOSE 8000
 # $PORT is honored for platforms that inject it (Render, Railway, Cloud Run…).
 # --proxy-headers + --forwarded-allow-ips make per-IP rate limiting see the real
 # client IP when running behind a trusted reverse proxy (see DEPLOYMENT.md).
-CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=${LATTIX_FORWARDED_ALLOW_IPS:-127.0.0.1}"]
+# --timeout-keep-alive outlasts the proxy's pooled upstream connections, which
+# otherwise get closed under it and surface as sporadic 502s.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.environ.get('PORT','8000'), timeout=4)" || exit 1
+
+CMD ["sh", "-c", "exec uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=${LATTIX_FORWARDED_ALLOW_IPS:-127.0.0.1} --timeout-keep-alive ${LATTIX_KEEPALIVE:-75}"]

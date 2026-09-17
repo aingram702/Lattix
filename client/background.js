@@ -3,7 +3,8 @@
 // The extension is a thin shell around the same single-page client the relay
 // serves. Clicking the toolbar icon opens (or focuses) the app in a full tab;
 // the app itself talks to whichever relay server is configured in Settings
-// (defaults to http://localhost:8000 — see js/config.js).
+// (defaults to http://localhost:8000 — change it from the sign-in screen or
+// Settings → Relay server; see js/config.js).
 
 const APP_URL = chrome.runtime.getURL("index.html");
 

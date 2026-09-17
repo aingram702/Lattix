@@ -9,7 +9,7 @@ public keys, opaque ciphertext, and encrypted blobs it cannot read — it can't
 read your messages, and it can't forge them.
 
 - **Repository:** https://github.com/aingram702/Lattix
-- **Current version:** **2.0.0** — see [Release Notes](Release-Notes)
+- **Current version:** **2.1.0** — see [Release Notes](Release-Notes)
 - **License:** MIT
 
 ---
@@ -84,7 +84,7 @@ See [Cryptography](Cryptography) for the full construction.
 
 ## Project status
 
-Lattix is at **2.0.0** and is a solid, correct **reference implementation** — not
+Lattix is at **2.1.0** and is a solid, correct **reference implementation** — not
 a formally audited product. It is a great way to learn how a post-quantum E2E
 messenger fits together, and it is usable for real for small trusted groups. Get a
 professional review before trusting it with lives. See

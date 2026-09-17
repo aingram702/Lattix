@@ -6,7 +6,14 @@ API is agnostic to the client's encryption scheme.
 
 - **Base URL:** your relay origin (e.g. `https://chat.example.com`).
 - **Auth:** send `Authorization: Bearer <token>` on every endpoint except
-  register, login, health, and static assets.
+  register, login, health, and static assets. Tokens live in the relay's memory
+  for 12 hours; after a relay restart every request answers `401`, and clients
+  log in again with the unlocked identity.
+- **CORS:** the desktop apps (`http://localhost:*`, `http://127.0.0.1:*`) and the
+  Chrome extension (`chrome-extension://…`) may call a relay on another origin by
+  default; add others with `LATTIX_CORS_ORIGINS`. No cookies are used.
+- **Caching:** `/api/*` responses carry `Cache-Control: no-store`; the static
+  client carries `no-cache` (revalidate) so a redeploy is picked up at once.
 - **Interactive docs:** `GET /api/docs` (disable in prod with `LATTIX_DOCS_URL=`).
 - **Usernames** must match `^[a-zA-Z0-9_.-]{3,32}$` and are lower-cased server-side.
 
@@ -117,16 +124,31 @@ referenced it (otherwise `404`).
 
 ## Realtime & health
 
-### `WS /ws?token=<token>`
-After connecting you receive JSON events:
+### `WS /ws`
+Authenticate with the **first frame** (2.1+):
+```json
+{ "type": "auth", "token": "<token>" }
+```
+The relay answers `{ "type": "ready", "username": "ada" }`, or closes the socket
+with code **4401** if the token is missing, invalid or expired (for example
+because the relay restarted and its in-memory sessions are gone). It waits 10
+seconds for the auth frame. Keeping the token out of the URL matters behind a
+reverse proxy: Caddy, nginx and uvicorn log the request line, query string
+included.
+
+`WS /ws?token=<token>` still works for 1.x/2.0 clients.
+
+After `ready` you receive JSON events:
 ```json
 { "type": "envelope",       "envelope": { ... } }   // 1:1 message/file
 { "type": "group_envelope", "envelope": { ... } }   // group message/file
 { "type": "group",  "action": "created|members", "group_id": 1 }
 { "type": "presence", "username": "bob", "online": true }
 ```
-Send any text (e.g. `"ping"`) to keep the socket alive. Presence is sent only to
-your contacts.
+Send `"ping"` periodically; the relay answers `{ "type": "pong" }`. The client
+pings every 25 s and treats a ping with no reply within 10 s as a dead socket
+(silently dropped by a proxy idle timeout, NAT or sleep), then reconnects and
+fetches anything it missed over REST. Presence is sent only to your contacts.
 
 **Presence snapshot (2.0).** On connect the relay immediately sends one
 `presence` event per contact who is *already* online, then continues to send
@@ -139,8 +161,16 @@ after a reload.
 ### `GET /api/health`
 → (no auth) — for load-balancer probes:
 ```json
-{ "status": "ok", "version": "2.0.0", "max_file_bytes": 52428800 }
+{
+  "status": "ok", "version": "2.1.0", "max_file_bytes": 52428800,
+  "time": 1789650000.0, "features": ["ws-auth-message", "ws-pong", "cors-local"]
+}
 ```
+`features` (2.1) lists what the relay supports, so clients and the Settings →
+Relay server **Test connection** check don't have to guess from the version:
+`ws-auth-message` (first-frame WebSocket auth), `ws-pong` (answers pings),
+`cors-local` (desktop-app and extension origins allowed).
+
 `max_file_bytes` (added in 2.0) is `LATTIX_MAX_FILE_MB` in bytes. The client reads
 it at boot so it can reject an oversized attachment *before* encrypting it, rather
 than doing the work and then taking a `413`. Older clients ignore the field.

@@ -732,3 +732,41 @@ kbd {
 .ttl-opt { padding: 10px; border-radius: 10px; border: 1px solid var(--border-2); background: var(--surface-2);
   font-size: 13px; font-weight: 600; text-align: center; }
 .ttl-opt.active { border-color: var(--accent); color: var(--accent-2); box-shadow: 0 0 0 2px var(--accent-dim); }
+
+/* ---------------- Relay server (sign-in screen + dialog) ---------------- */
+.auth-relay {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 8px;
+  margin: 14px auto 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px;
+  color: var(--muted); font-size: 12px; line-height: 1.4; max-width: 100%;
+}
+.auth-relay .conn-dot { flex-shrink: 0; }
+.auth-relay-text { min-width: 0; overflow-wrap: anywhere; }
+.auth-relay strong { color: var(--text); font-weight: 600; }
+.auth-relay-state { color: var(--muted); }
+.conn-dot.checking { background: var(--border-2); animation: relay-pulse 1.1s ease-in-out infinite; }
+@keyframes relay-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .conn-dot.checking { animation: none; } }
+
+.link-btn {
+  background: none; border: 0; padding: 2px 4px; border-radius: 6px;
+  color: var(--accent-2); font: inherit; font-weight: 600; cursor: pointer;
+}
+.link-btn:hover { text-decoration: underline; }
+
+.server-result {
+  margin-top: 12px; padding: 10px 12px; border-radius: 11px; font-size: 12.5px; line-height: 1.5;
+  border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text);
+  overflow-wrap: anywhere;
+}
+/* State is carried by the border and the title wording, not by coloured text:
+   a red or amber title fails contrast on some themes' surfaces. */
+.server-result.ok   { border-color: var(--teal);   border-left: 4px solid var(--teal); }
+.server-result.err  { border-color: var(--danger); border-left: 4px solid var(--danger); }
+.server-result.warn { border-color: #c9a227;       border-left: 4px solid #c9a227; }
+.server-result .result-title { font-weight: 700; display: block; margin-bottom: 2px; color: var(--text); }
+:root[data-theme="light"] #server-hint.warn { color: #8a5a00; }
+#server-url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; }
+/* --danger as text is under 4.5:1 on some themes' dialog surface; keep the
+   message in the body colour and mark it with a red glyph instead. */
+#server-hint.err { color: var(--text); }
+#server-hint.err::before { content: "✕ "; content: "✕ " / ""; color: var(--danger); font-weight: 700; }

@@ -64,7 +64,7 @@ restarts on boot. It binds `127.0.0.1:8000` by default.
 
 ```bash
 curl http://127.0.0.1:8000/api/health
-# -> {"status":"ok","version":"2.0.0","max_file_bytes":52428800}
+# -> {"status":"ok","version":"2.1.0","max_file_bytes":52428800}
 ```
 
 ---

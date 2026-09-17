@@ -1,0 +1,59 @@
+# systemd unit for the Lattix relay on a VPS, behind Caddy or nginx.
+# Installed to /etc/systemd/system/lattix.service by install-debian.sh.
+#
+#   sudo systemctl status lattix
+#   sudo journalctl -u lattix -f
+#
+# Settings live in /etc/lattix/lattix.env (see that file for each variable).
+
+[Unit]
+Description=Lattix zero-knowledge relay
+Documentation=https://github.com/aingram702/Lattix/wiki
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lattix
+Group=lattix
+WorkingDirectory=/opt/lattix/app
+EnvironmentFile=/etc/lattix/lattix.env
+# Exactly one worker: sessions, WebSockets and rate limits live in memory.
+# Bound to loopback — only the reverse proxy can reach it.
+ExecStart=/opt/lattix/venv/bin/python -m uvicorn server.main:app \
+    --host ${LATTIX_BIND} --port ${LATTIX_PORT} --workers 1 \
+    --proxy-headers --forwarded-allow-ips ${LATTIX_FORWARDED_ALLOW_IPS} \
+    --timeout-keep-alive ${LATTIX_KEEPALIVE} \
+    --no-server-header --log-level warning
+Restart=always
+RestartSec=2
+# Let in-flight requests finish and sockets close cleanly on restart.
+TimeoutStopSec=15
+KillSignal=SIGINT
+
+# Hardening — the relay needs nothing but its code and its data directory.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lattix
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,8 +1,11 @@
 // Lattix — application logic.
 
-import { LattixApi } from "./api.js";
+import { LattixApi, probeRelay } from "./api.js";
 import * as C from "./crypto.js";
-import { isExtension, getServerUrl, setServerUrl, shareOrigin } from "./config.js";
+import {
+  isExtension, getServerUrl, setServerUrl, shareOrigin, normalizeServerUrl,
+  apiBase, defaultServer, serverLabel, serverOrigin, usingRemoteServer, isLocalHost,
+} from "./config.js";
 import {
   initAppearance, applyTheme, currentTheme, applyChatColor, currentChatColor,
 } from "./theme.js";
@@ -391,8 +394,43 @@ function showAuth() {
   $("#unlock-form").onsubmit = onUnlock;
   $("#import-form").onsubmit = onImport;
   wireAuthHelpers();
+  $("#auth-relay-change").onclick = () => openServerModal();
+  refreshAuthRelay();
 
   switchAuthView(loadStoredVault() ? "unlock" : "create");
+}
+
+// The sign-in screen names the relay it will use and whether it answers, so
+// a wrong or unreachable server is obvious before keys are generated or a
+// password is typed — and it can be changed right there, before any login.
+let _authProbe = 0;
+async function refreshAuthRelay() {
+  const probe = ++_authProbe;
+  const dot = $("#auth-relay-dot"), stateEl = $("#auth-relay-state");
+  $("#auth-relay-host").textContent = usingRemoteServer() ? serverLabel() : "this server";
+  $("#auth-relay").title = serverOrigin();
+  dot.className = "conn-dot checking";
+  stateEl.textContent = "checking…";
+  const r = await probeRelay(apiBase(), { checkSocket: false, timeoutMs: 6000 });
+  if (probe !== _authProbe) return;
+  dot.className = "conn-dot " + (r.ok ? "on" : "off");
+  stateEl.textContent = r.ok ? `· online${r.latencyMs ? ` (${r.latencyMs} ms)` : ""}` : "· unreachable";
+  $("#auth-relay").title = r.ok ? serverOrigin() : `${serverOrigin()} — ${r.error}`;
+}
+
+// Fail fast before seconds of key generation / vault decryption when the
+// relay can't be reached, and point at the setting that fixes it.
+async function ensureRelayReachable() {
+  const r = await probeRelay(apiBase(), { checkSocket: false, timeoutMs: 8000 });
+  if (r.ok) return true;
+  const change = await askModal({
+    title: "Can't reach the relay",
+    body: r.error,
+    confirmText: "Relay settings", cancelText: "Close",
+  });
+  if (change) openServerModal();
+  refreshAuthRelay();
+  return false;
 }
 
 // A rough, local strength signal — no wordlist, no network. Length dominates
@@ -475,6 +513,7 @@ async function onCreate(e) {
   btn.disabled = true;
   btn.classList.add("busy");
   try {
+    if (!(await ensureRelayReachable())) return;
     const identity = await C.generateIdentity();
     identity.username = username;
     await api.register({
@@ -518,14 +557,53 @@ async function onUnlock(e) {
   if (!vault) return switchAuthView("create");
   btn.disabled = true; btn.classList.add("busy");
   try {
+    if (!(await ensureRelayReachable())) return;
     const identity = await C.openVault(vault, password);
-    await api.login(identity.username, identity.authSecret);
+    if (!(await loginOrEnroll(identity))) return;
     await bootApp(identity);
   } catch (err) {
     toast(err.message || "Unlock failed", "error");
   } finally {
     btn.disabled = false; btn.classList.remove("busy");
   }
+}
+
+// Log in with an unlocked identity. The vault has already decrypted, so the
+// password is right; a 401 here means THIS relay doesn't know the identity —
+// typically because the user just pointed Lattix at a new relay (say, their
+// own VPS). Offer to publish the same keys there instead of a dead end.
+async function loginOrEnroll(identity) {
+  try {
+    await api.login(identity.username, identity.authSecret);
+    return true;
+  } catch (err) {
+    if (err.status !== 401) throw err;
+  }
+  const label = serverLabel();
+  const enroll = await askModal({
+    title: `${identity.username} isn't registered on ${label}`,
+    body: `Your vault unlocked, but this relay doesn't recognise the account. If you've moved to a new ` +
+          `relay, you can register this same identity here — your keys and safety code stay the same, but ` +
+          `conversations on the old relay don't come with it, and contacts need to use this relay too.`,
+    confirmText: "Register here", cancelText: "Cancel",
+  });
+  if (!enroll) return false;
+  try {
+    await api.register({
+      username: identity.username,
+      kem_public_key: identity.kem.publicKey,
+      dsa_public_key: identity.dsa.publicKey,
+      fingerprint: identity.fingerprint,
+      auth_secret: identity.authSecret,
+    });
+  } catch (err) {
+    if (err.status === 409) {
+      throw new Error(`The username "${identity.username}" is already taken on ${label} by a different identity.`);
+    }
+    throw err;
+  }
+  toast(`Registered ${identity.username} on ${label}`, "success");
+  return true;
 }
 
 async function onImport(e) {
@@ -537,8 +615,9 @@ async function onImport(e) {
   btn.disabled = true; btn.classList.add("busy");
   try {
     const vault = JSON.parse(await file.text());
+    if (!(await ensureRelayReachable())) return;
     const identity = await C.openVault(vault, password);
-    await api.login(identity.username, identity.authSecret);
+    if (!(await loginOrEnroll(identity))) return;
     storeVault(vault);
     await bootApp(identity);
     toast("Vault imported to this device", "success");
@@ -566,17 +645,28 @@ async function bootApp(identity) {
 
   wireAppEvents();
 
+  // The relay keeps sessions in memory, so restarting it (a deploy, a VPS
+  // reboot) or letting the 12-hour token lapse would otherwise strand this
+  // tab. The identity is already unlocked, so just log in again.
+  api.setReauth(() => api.login(identity.username, identity.authSecret));
+
   api.on("envelope", (env) => onEnvelope(env, "dm"))
      .on("group_envelope", (env) => onEnvelope(env, "group"))
      .on("group", onGroupEvent)
      .on("presence", onPresence)
-     .on("status", (s) => setConnected(s.connected));
-  api.connectSocket();
+     .on("status", (s) => {
+       setConnected(s.connected);
+       if (s.connected && s.reconnected) resyncAfterReconnect();
+     })
+     .on("auth", (a) => { if (!a.renewed) onSessionRejected(); });
 
-  // Learn this relay's upload ceiling; harmless if an older relay omits it.
-  api.health()
+  // Learn this relay's upload ceiling and capabilities before opening the
+  // socket (the socket's auth mode depends on them); harmless if an older
+  // relay omits either.
+  await api.health()
     .then((h) => { if (h && h.max_file_bytes > 0) MAX_UPLOAD_BYTES = h.max_file_bytes; })
     .catch(() => {});
+  api.connectSocket();
 
   const me = await api.me();
   identity.avatar = me.avatar || identity.avatar || null;
@@ -638,12 +728,70 @@ function renderSelf() {
 }
 
 function setConnected(v) {
+  const was = state.connected;
   state.connected = v;
   $("#conn-dot").className = "conn-dot " + (v ? "on" : "off");
-  $("#conn-label").textContent = v ? "Connected" : "Reconnecting…";
+  $("#conn-label").textContent = v
+    ? (usingRemoteServer() ? `Connected · ${serverLabel()}` : "Connected")
+    : "Reconnecting…";
   const strip = $("#conn-status");
   strip.classList.toggle("clickable", !v);
-  strip.setAttribute("title", v ? "Connected to the relay" : "Disconnected — click to retry now");
+  strip.setAttribute("title", v ? `Connected to the relay at ${serverOrigin()}` : "Disconnected — click to retry now");
+  // Presence is re-sent as a snapshot on every connect; anything we believed
+  // while disconnected is stale (contacts may have left in the meantime).
+  if (v && !was && state.online.size) { state.online.clear(); scheduleContacts(); }
+}
+
+// Envelopes pushed while the socket was down were never delivered to this
+// tab. After a reconnect, pull everything newer than what we hold — new
+// contacts and groups included — so a proxy hiccup or a relay restart never
+// silently loses messages.
+let _resync = null;
+function resyncAfterReconnect() {
+  if (_resync) return _resync;
+  _resync = (async () => {
+    try {
+      const me = await api.me();
+      for (const c of me.contacts) ensureDmConvo(c);
+      for (const g of (me.groups || [])) ensureGroupConvo(g);
+      await Promise.allSettled([
+        ...me.contacts.map(async (c) => {
+          const convo = ensureDmConvo(c);
+          const envs = await api.conversation(c, convo.maxId);
+          for (const env of envs) await ingestDm(env, { live: true });
+        }),
+        ...(me.groups || []).map(async (g) => {
+          const convo = ensureGroupConvo(g);
+          const envs = await api.groupMessages(g.id, convo.maxId);
+          for (const env of envs) await ingestGroup(env, { live: true });
+        }),
+      ]);
+      renderContacts();
+    } catch (_) {
+      // Next reconnect tries again.
+    } finally {
+      _resync = null;
+    }
+  })();
+  return _resync;
+}
+
+// The relay refused to renew the session: the account was deleted, or its
+// credentials no longer match (e.g. a different relay now answers at this
+// address). Keys stay safe in the vault; send the user back to unlock.
+let _sessionRejected = false;
+function onSessionRejected() {
+  if (_sessionRejected) return;
+  _sessionRejected = true;
+  askModal({
+    title: "Signed out by the relay",
+    body: `${serverLabel()} no longer accepts this session and rejected signing in again. Your keys are still ` +
+          `in this device's vault — unlock to try again, or check Relay server settings.`,
+    confirmText: "Back to sign-in", cancelText: "Relay settings",
+  }).then((back) => {
+    if (back) location.reload();
+    else openServerModal({ afterClose: () => location.reload() });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1797,6 +1945,164 @@ function processDeepLink() {
 }
 
 // ---------------------------------------------------------------------------
+// Relay server dialog
+//
+// Opened from the sign-in screen (so a relay can be chosen before an account
+// exists or a vault is unlocked) and from Settings. Validates the URL as it is
+// typed, can test it — reachability, that it really is a Lattix relay, and
+// that WebSocket upgrades survive the reverse proxy — and saves it.
+// ---------------------------------------------------------------------------
+let _serverAfterClose = null;
+
+function defaultRelayDescription() {
+  if (isExtension()) return `the relay at ${defaultServer()}`;
+  if (isLocalHost(location.hostname)) return `the relay built into this app (${location.host})`;
+  return `the relay this app was loaded from (${location.host})`;
+}
+
+function showServerResult(kind, title, lines = []) {
+  const box = $("#server-result");
+  box.hidden = false;
+  box.className = `server-result ${kind}`;
+  box.replaceChildren(
+    el("span", { class: "result-title" }, title),
+    ...lines.filter(Boolean).map((l) => el("div", {}, l)),
+  );
+}
+
+/** Validate the field; returns the normalised result and updates the hint. */
+function validateServerField() {
+  const v = normalizeServerUrl($("#server-url").value);
+  const hint = $("#server-hint");
+  if (v.error) { hint.className = "fine err"; hint.textContent = v.error; }
+  else if (!v.url) { hint.className = "fine"; hint.textContent = `Empty uses ${defaultRelayDescription()}.`; }
+  else if (v.warning) { hint.className = "fine warn"; hint.textContent = v.warning; }
+  else { hint.className = "fine"; hint.textContent = `Will connect to ${v.url}`; }
+  return v;
+}
+
+/** The API base a normalised URL means ("" when it is this page's origin). */
+function baseFor(url) {
+  if (!url) return defaultServer();
+  if (!isExtension() && url === location.origin) return "";
+  return url;
+}
+
+async function testServer(url) {
+  const base = baseFor(url);
+  showServerResult("", "Testing…", [`Contacting ${serverOrigin(base)}`]);
+  $("#server-test").disabled = true;
+  try {
+    const r = await probeRelay(base);
+    if (!r.ok) {
+      showServerResult("err", "Connection failed", [r.error]);
+    } else {
+      const socketLine = r.socket === "ok"
+        ? "WebSocket: working — upgrades reach the relay"
+        : "WebSocket: not checked (this relay predates the check — upgrade it to 2.1+)";
+      showServerResult(r.socket === "ok" ? "ok" : "warn", "Relay reachable", [
+        `Lattix ${r.version || "relay"} at ${serverOrigin(base)}`,
+        `Response time: ${r.latencyMs} ms`,
+        socketLine,
+      ]);
+    }
+    return r;
+  } finally {
+    $("#server-test").disabled = false;
+  }
+}
+
+function openServerModal({ afterClose = null } = {}) {
+  _serverAfterClose = afterClose;
+  $("#server-url").value = getServerUrl();
+  $("#server-result").hidden = true;
+  validateServerField();
+  openModal("server-modal", "#server-url");
+}
+
+function closeServerModal() {
+  closeModal($("#server-modal"));
+}
+
+function wireServerModal() {
+  const modal = $("#server-modal");
+  $("#server-close").onclick = closeServerModal;
+  $("#server-cancel").onclick = closeServerModal;
+  modal.addEventListener("lattix:dismissed", () => {
+    const fn = _serverAfterClose;
+    _serverAfterClose = null;
+    if (fn) fn();
+  });
+
+  $("#server-url").addEventListener("input", () => {
+    $("#server-result").hidden = true;
+    validateServerField();
+  });
+  $("#server-test").onclick = () => {
+    const v = validateServerField();
+    if (v.error) return $("#server-url").focus();
+    testServer(v.url);
+  };
+  $("#server-reset").onclick = () => {
+    $("#server-url").value = "";
+    $("#server-result").hidden = true;
+    validateServerField();
+    $("#server-url").focus();
+  };
+
+  $("#server-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const v = validateServerField();
+    if (v.error) return $("#server-url").focus();
+
+    const stored = v.url && baseFor(v.url) === "" ? "" : v.url;
+    if (baseFor(stored) === apiBase()) {
+      if (stored !== getServerUrl()) setServerUrl(stored);  // tidy equivalent spellings
+      closeServerModal();
+      return toast(`Already using ${serverLabel()}`);
+    }
+
+    const save = $("#server-save");
+    save.disabled = true;
+    let result;
+    try { result = await testServer(v.url); }
+    finally { save.disabled = false; }
+
+    if (!result.ok) {
+      const anyway = await askModal({
+        title: "Save a relay that didn't answer?",
+        body: `${result.error} You can save it anyway — for example if the server isn't set up yet — ` +
+              `and Lattix will keep trying to connect.`,
+        confirmText: "Save anyway", cancelText: "Keep editing",
+      });
+      if (!anyway) return $("#server-url").focus();
+    }
+
+    if (state.identity) {
+      const go = await askModal({
+        title: "Switch relay?",
+        body: `Lattix will sign out of ${serverLabel()} and reload. Unlock with your password to connect to ` +
+              `${serverLabel(baseFor(stored))}. Accounts and conversations belong to a relay — if this ` +
+              `identity isn't registered there yet, you'll be offered to register it.`,
+        confirmText: "Switch and reload",
+      });
+      if (!go) return;
+      await api.logout();          // against the OLD relay, before switching
+      setServerUrl(stored);
+      _serverAfterClose = null;
+      location.reload();
+      return;
+    }
+
+    setServerUrl(stored);
+    _serverAfterClose = null;
+    closeServerModal();
+    refreshAuthRelay();
+    toast(`Relay set to ${serverLabel()}`, "success");
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 function wireSettings() {
@@ -1830,7 +2136,7 @@ function wireSettings() {
     catch (err) { toast(err.message, "error"); }
   };
 
-  $("#server-save").onclick = () => { setServerUrl($("#server-url").value); location.reload(); };
+  $("#server-change-btn").onclick = () => openServerModal();
 
   $("#export-json-btn").onclick = exportChatJson;
   $("#backup-btn").onclick = makeBackup;
@@ -1858,8 +2164,10 @@ function refreshSettingsUi() {
   $("#toggle-notify").checked = localStorage.getItem(NOTIFY_KEY) === "1";
   $("#toggle-autoimg").checked = autoImages();
   fillAvatar($("#avatar-preview"), { name: state.identity.username, avatar: state.identity.avatar });
-  $("#server-section").hidden = !isExtension();
-  if (isExtension()) $("#server-url").value = getServerUrl();
+  $("#server-current").textContent = usingRemoteServer() ? serverLabel() : "This server";
+  $("#server-current-sub").textContent = usingRemoteServer()
+    ? `${serverOrigin()}${state.connected ? " — connected" : " — not connected"}`
+    : `Using the relay this app was loaded from (${location.host}).`;
   renderBlockedList();
 }
 
@@ -2028,4 +2336,5 @@ async function deleteAppData() {
 // Start
 // ---------------------------------------------------------------------------
 initAppearance();
+wireServerModal();
 showAuth();

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import secrets
 import time
@@ -55,6 +56,8 @@ MAX_FILE_BYTES = int(os.environ.get("LATTIX_MAX_FILE_MB", "50")) * 1024 * 1024
 FILE_READ_CHUNK = 1024 * 1024
 TOKEN_TTL = 60 * 60 * 12  # 12 hours
 PBKDF2_ITERS = 200_000
+# How long a WebSocket may stay open without authenticating (see /ws).
+WS_AUTH_TIMEOUT = 10
 # A dummy salt used to run the password hash on a non-existent user too, so
 # login timing doesn't reveal whether a username exists.
 _DUMMY_LOGIN_SALT = secrets.token_hex(16)
@@ -62,22 +65,81 @@ _DUMMY_LOGIN_SALT = secrets.token_hex(16)
 # API docs (/api/docs) can be disabled in production by setting LATTIX_DOCS_URL="".
 _DOCS_URL = os.environ.get("LATTIX_DOCS_URL", "/api/docs") or None
 
-app = FastAPI(title="Lattix", version="2.0.0", docs_url=_DOCS_URL)
+app = FastAPI(title="Lattix", version="2.1.0", docs_url=_DOCS_URL)
 
-# Optional CORS — only needed if the client is served from a DIFFERENT origin
-# than the API (the bundled web app is same-origin and needs none). Set
-# LATTIX_CORS_ORIGINS to a comma-separated allowlist, e.g.
-# "https://chat.example.com".
-_cors_origins = [o.strip() for o in os.environ.get("LATTIX_CORS_ORIGINS", "").split(",") if o.strip()]
-if _cors_origins:
+# --------------------------------------------------------------------------- #
+# CORS — letting remote clients reach this relay
+# --------------------------------------------------------------------------- #
+# The web app this relay serves is same-origin and needs no CORS. Two kinds of
+# client are NOT same-origin and would otherwise be blocked by the browser when
+# they point at a remote relay (e.g. one on a VPS behind Caddy/nginx):
+#
+#   * the desktop apps, which open the UI from their local relay at
+#     http://localhost:8000 (or 127.0.0.1), and
+#   * the Chrome extension (chrome-extension://<32-char id>).
+#
+# Those origins are allowed by default. That is safe because authentication is
+# a bearer token the client attaches itself — there are no cookies, so a page
+# can't ride on anyone's session (allow_credentials stays False).
+#
+#   LATTIX_CORS_ORIGINS      extra comma-separated origins, or "*" for any
+#                            (e.g. "https://chat.example.com")
+#   LATTIX_CORS_ALLOW_LOCAL  "0" to stop allowing the desktop/extension origins
+_LOCAL_ORIGIN_REGEX = (
+    r"^(?:https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?"
+    r"|chrome-extension://[a-p]{32})$"
+)
+_cors_origins = [o.strip().rstrip("/") for o in
+                 os.environ.get("LATTIX_CORS_ORIGINS", "").split(",") if o.strip()]
+_cors_allow_local = os.environ.get("LATTIX_CORS_ALLOW_LOCAL", "1").strip().lower() \
+    not in ("0", "false", "no", "off")
+if _cors_origins or _cors_allow_local:
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origin_regex=_LOCAL_ORIGIN_REGEX if _cors_allow_local else None,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+        expose_headers=["X-Plaintext-Size"],
         allow_credentials=False,
+        # Every authenticated JSON call is "non-simple" and costs a preflight
+        # round trip. Through a reverse proxy on a distant VPS that doubles
+        # request latency, so let the browser cache the answer (Chromium caps
+        # this at 2 hours).
+        max_age=7200,
     )
+
+
+class _CacheHeaders:
+    """Keep shared caches (reverse proxies, CDNs) from storing API responses —
+    they carry per-user ciphertext and directory data — and make the static
+    client revalidate, so a redeployed relay's UI is picked up at once instead
+    of an old app.js lingering in a cache in front of it.
+
+    Plain ASGI rather than @app.middleware("http"): BaseHTTPMiddleware re-wraps
+    every response body, which is wasted work on multi-megabyte file blobs."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        value = b"no-store" if scope.get("path", "").startswith("/api/") else b"no-cache"
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                if not any(k.lower() == b"cache-control" for k, _ in headers):
+                    headers.append((b"cache-control", value))
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
+app.add_middleware(_CacheHeaders)
 
 
 @app.on_event("startup")
@@ -445,8 +507,8 @@ class ConnectionManager:
     def __init__(self) -> None:
         self.active: dict[str, set[WebSocket]] = {}
 
-    async def connect(self, username: str, ws: WebSocket) -> None:
-        await ws.accept()
+    def connect(self, username: str, ws: WebSocket) -> None:
+        """Register an already-accepted, authenticated socket."""
         self.active.setdefault(username, set()).add(ws)
 
     def disconnect(self, username: str, ws: WebSocket) -> None:
@@ -515,20 +577,57 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+async def _ws_authenticate(ws: WebSocket, query_token: str) -> Optional[str]:
+    """Resolve the socket's user.
+
+    Preferred: the client sends {"type": "auth", "token": "..."} as its first
+    frame. Keeping the token out of the URL matters behind a reverse proxy —
+    Caddy, nginx and uvicorn all write the request line, query string included,
+    to their access logs, which would leave live session tokens on disk.
+
+    The ?token= query parameter is still honoured so 1.x/2.0 clients keep
+    working against this relay.
+    """
+    if query_token:
+        return _resolve_token(query_token)
+    try:
+        raw = await asyncio.wait_for(ws.receive_text(), timeout=WS_AUTH_TIMEOUT)
+        msg = json.loads(raw)
+    except (asyncio.TimeoutError, WebSocketDisconnect, ValueError, KeyError, RuntimeError):
+        return None
+    if not isinstance(msg, dict) or msg.get("type") != "auth":
+        return None
+    return _resolve_token(str(msg.get("token") or ""))
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
-    username = _resolve_token(token)
+    # Accept before authenticating: closing an un-accepted socket surfaces in
+    # the browser as a bare 403/1006, indistinguishable from a proxy that
+    # doesn't forward the Upgrade. Accepting first lets the client see 4401
+    # and re-login instead of retrying a dead token forever.
+    await ws.accept()
+    username = await _ws_authenticate(ws, token)
     if not username:
-        await ws.close(code=4401)
+        try:
+            await ws.close(code=4401)
+        except RuntimeError:
+            pass  # client already went away
         return
-    await manager.connect(username, ws)
-    await manager.presence(username, True)
-    await manager.send_presence_snapshot(username, ws)
+    manager.connect(username, ws)
     try:
-        # Keep the socket alive; clients may send pings.
+        await ws.send_json({"type": "ready", "username": username})
+        await manager.presence(username, True)
+        await manager.send_presence_snapshot(username, ws)
         while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
+            text = await ws.receive_text()
+            # Application-level heartbeat. Reverse proxies drop idle upgraded
+            # connections (nginx: proxy_read_timeout, 60s by default), and a
+            # TCP connection can die silently on a flaky network. The client
+            # pings; answering lets it notice a dead socket and reconnect.
+            if text == "ping":
+                await ws.send_json({"type": "pong"})
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         manager.disconnect(username, ws)
@@ -542,7 +641,16 @@ async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
 def health() -> dict:
     # max_file_bytes lets the client reject an oversized attachment before it
     # spends time encrypting it, instead of discovering the limit via a 413.
-    return {"status": "ok", "version": app.version, "max_file_bytes": MAX_FILE_BYTES}
+    # `features` lets a client (and the Settings → "Test connection" check)
+    # discover what this relay supports without guessing from the version.
+    return {
+        "status": "ok",
+        "version": app.version,
+        "max_file_bytes": MAX_FILE_BYTES,
+        "time": time.time(),
+        "features": ["ws-auth-message", "ws-pong", "cors-local"] if _cors_allow_local
+        else ["ws-auth-message", "ws-pong"],
+    }
 
 
 # --------------------------------------------------------------------------- #

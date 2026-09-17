@@ -35,8 +35,26 @@ file, "persistence" just means **one durable volume** mounted at `/data`.
 | `LATTIX_DB` | `<app>/data/lattix.db` | SQLite path. **Point this at your mounted volume**, e.g. `/data/lattix.db`. |
 | `LATTIX_MAX_FILE_MB` | `50` | Max encrypted file upload size. |
 | `LATTIX_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Which upstream IPs may set `X-Forwarded-For`. Set to `*` **only** when the app is reachable solely through a trusted proxy (see the security note). Needed for correct per-IP rate limiting behind a proxy. |
-| `LATTIX_CORS_ORIGINS` | *(none)* | Comma-separated CORS allowlist. Only needed if you serve the client from a different origin than the API; the bundled app is same-origin and needs none. |
+| `LATTIX_KEEPALIVE` | `75` | Idle keep-alive seconds. Keep it above your proxy's upstream keep-alive (60 s in the shipped configs) to avoid sporadic 502s. |
+| `LATTIX_CORS_ORIGINS` | *(none)* | Extra comma-separated origins allowed cross-origin (or `*`). Only needed if you host the web client on another origin. |
+| `LATTIX_CORS_ALLOW_LOCAL` | `1` | Lets the desktop apps (`http://localhost:*`) and the Chrome extension use this relay remotely. `0` to turn off. |
 | `LATTIX_DOCS_URL` | `/api/docs` | Set to empty to disable the interactive API docs in production. |
+
+---
+
+## Option A0 — Debian VPS (OVHcloud etc.) without Docker
+
+One command sets up the relay as a hardened systemd service behind **Caddy**
+(or **nginx + certbot**) with Let's Encrypt, and a firewall:
+
+```bash
+git clone https://github.com/aingram702/Lattix.git && cd Lattix
+sudo bash deploy/vps/install-debian.sh --domain chat.example.com --email you@example.com --source "$PWD"
+# add  --proxy nginx  to use nginx instead of Caddy
+```
+
+Full walkthrough, the reasoning behind each proxy setting, backups and
+troubleshooting: [`deploy/vps/README.md`](deploy/vps/README.md).
 
 ---
 
@@ -190,11 +208,18 @@ troubleshooting — is on the wiki:
 
 ---
 
-## Connecting the Chrome extension
+## Connecting the desktop apps and the Chrome extension
 
-After deploying, open the extension, go to **Settings → Relay server**, and set
-it to your HTTPS URL (e.g. `https://chat.example.com`). All crypto still runs
-locally; only ciphertext reaches the server.
+The web app served by your relay needs no setup. The desktop apps and the
+extension choose their relay in the app itself: on the sign-in screen click
+**Change** next to *Relay: …* — or, once signed in, **Settings → Relay server →
+Change…** — enter your HTTPS URL (e.g. `https://chat.example.com`), press
+**Test connection**, then **Save & connect**. The test confirms the relay answers,
+is a Lattix relay, and that WebSockets pass through your proxy.
+
+Unlocking an existing vault on a relay that doesn't know it offers to register
+the same identity there. All crypto still runs locally; only ciphertext reaches
+the server.
 
 ---
 
@@ -223,5 +248,8 @@ locally; only ciphertext reaches the server.
 | Real-time messages don't arrive, but appear after refresh | WebSocket isn't reaching the app. Ensure the proxy forwards `/ws` (Caddy does automatically) and that you're on `https://` so the client uses `wss://`. |
 | Everyone shares one rate-limit bucket / gets 429s together | Proxy client IP isn't being forwarded. Set `LATTIX_FORWARDED_ALLOW_IPS=*` (behind a trusted proxy only). |
 | Accounts/messages vanish after a redeploy | No persistent volume. Mount one at `/data` and set `LATTIX_DB=/data/lattix.db` (paid tier on some PaaS). |
+| Test connection: *HTTPS works, but WebSocket connections aren't getting through* | The proxy isn't forwarding `Upgrade`/`Connection` for `/ws`. Use the shipped Caddy/nginx configs; with Cloudflare in front, enable WebSockets. |
+| Desktop app / extension: *Couldn't reach …* but the web app works | A relay older than 2.1 doesn't allow other origins — upgrade it, or set `LATTIX_CORS_ORIGINS`. |
+| Sporadic `502` behind nginx | Proxy upstream keep-alive outlives the relay's. Keep `LATTIX_KEEPALIVE` (75) above the proxy's (60). |
 | Large file uploads rejected | Raise `LATTIX_MAX_FILE_MB` and, in Option A, the Caddy `max_size` in the Caddyfile. |
 | Certificate won't issue (Option A) | DNS must resolve to the server and ports 80/443 must be open before `docker compose up`. Check `docker compose logs caddy`. |

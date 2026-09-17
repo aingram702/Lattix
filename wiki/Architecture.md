@@ -24,8 +24,8 @@ MV3 extension). Key modules:
 |------|------|
 | `js/crypto.js` | All E2E crypto: ML-KEM-768, ML-DSA-65, AES-256-GCM, HKDF, vault & backup sealing. |
 | `js/app.js` | UI, conversation state, ingestion/decryption, all feature logic. |
-| `js/api.js` | REST + WebSocket client (transports only ciphertext). |
-| `js/config.js` | Runtime config (relay URL, used by the extension). |
+| `js/api.js` | REST + WebSocket client (transports only ciphertext): timeouts, read retries, automatic re-login after a relay restart, first-frame WebSocket auth, ping/pong watchdog, reconnect reporting for resync. |
+| `js/config.js` | Relay server setting for every build (sign-in screen and Settings), URL validation, share-link origin. |
 | `js/preload.js` | Applies the stored theme before the first paint. Must stay a *separate file* — MV3's CSP forbids inline script, so the usual inline anti-flash snippet isn't available. |
 | `js/theme.js`, `js/sound.js`, `js/qr.js` | Theming, notification tones, offline QR generator. |
 | `vendor/lattix-pqc.js` | Vendored, offline build of `@noble/post-quantum`. |

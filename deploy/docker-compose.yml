@@ -23,6 +23,7 @@ services:
       # Only Caddy can reach this container, so trust its forwarded client IPs.
       LATTIX_FORWARDED_ALLOW_IPS: "*"
       LATTIX_MAX_FILE_MB: "50"
+      LATTIX_KEEPALIVE: "75"
     volumes:
       - lattix-data:/data
     expose:

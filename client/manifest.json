@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lattix — quantum-resistant messaging",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "End-to-end, post-quantum encrypted chat and file sharing. Connects to your own Lattix relay server.",
   "action": {
     "default_title": "Open Lattix"

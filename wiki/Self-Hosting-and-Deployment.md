@@ -17,7 +17,29 @@ has the full, copy-pasteable walkthroughs.
 
 See [Configuration](Configuration) for every environment variable.
 
-## Option A — Your own server with Docker + automatic HTTPS (recommended)
+## Option A0 — Debian VPS (OVHcloud etc.) without Docker
+
+A native install: the relay as a sandboxed systemd service on `127.0.0.1`,
+**Caddy** (default) or **nginx + certbot** in front with Let's Encrypt, and `ufw`
+allowing only SSH/80/443.
+
+```bash
+git clone https://github.com/aingram702/Lattix.git && cd Lattix
+sudo bash deploy/vps/install-debian.sh --domain chat.example.com --email you@example.com --source "$PWD"
+#   --proxy nginx       use nginx + certbot instead of Caddy
+#   --max-file-mb 100   raise the upload limit (proxy limit follows)
+# Update later:
+sudo bash /opt/lattix/app/deploy/vps/install-debian.sh --update
+```
+
+The proxy configs are tuned for Lattix: WebSocket upgrades with long idle
+timeouts, upstream keep-alive shorter than the relay's (no sporadic 502s),
+retries while the relay restarts (Caddy), WebSockets kept open across proxy
+reloads, a body limit just above `LATTIX_MAX_FILE_MB`, and session tokens kept
+out of access logs. Walkthrough and troubleshooting:
+[`deploy/vps/README.md`](https://github.com/aingram702/Lattix/blob/main/deploy/vps/README.md).
+
+## Option A — Your own server with Docker + automatic HTTPS
 
 A single VPS runs the relay plus **Caddy**, which fetches and renews a Let's
 Encrypt certificate automatically. Files:
@@ -85,8 +107,12 @@ included for buildpack-based platforms.
 ## Connecting clients
 
 - **Web:** just open your HTTPS URL.
-- **Extension:** Settings → Relay server → your HTTPS URL. See
-  [Desktop Apps & Extension](Desktop-Apps-and-Extension).
+- **Desktop apps and extension:** sign-in screen → **Relay: … Change** (or
+  **Settings → Relay server → Change…**) → your HTTPS URL → **Test connection** →
+  **Save & connect**. See [Desktop Apps & Extension](Desktop-Apps-and-Extension).
+- **Restarts are routine.** The relay's sessions are in memory, but clients sign
+  back in with the identity they already have unlocked, reconnect, and fetch what
+  they missed.
 
 ## Security checklist
 

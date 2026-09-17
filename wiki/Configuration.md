@@ -12,8 +12,10 @@ files to edit.
 | `LATTIX_DB` | `<app>/data/lattix.db` | SQLite database path. **Point this at a persistent volume**, e.g. `/data/lattix.db`. The DB holds accounts, messages, and file blobs. |
 | `LATTIX_MAX_FILE_MB` | `50` | Maximum encrypted file upload size, in MB. |
 | `LATTIX_CLIENT_DIR` | `<app>/client` | Directory of the static client to serve (set automatically by the desktop installers). |
-| `LATTIX_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Which upstream IPs may set `X-Forwarded-For`. Set to `*` **only** when the app is reachable solely through a trusted reverse proxy — needed for correct per-IP rate limiting behind a proxy. |
-| `LATTIX_CORS_ORIGINS` | *(none)* | Comma-separated CORS allowlist. Only needed if the client is served from a **different** origin than the API; the bundled web app is same-origin and needs none. |
+| `LATTIX_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Which upstream IPs may set `X-Forwarded-For`. Behind a proxy on the same host (the Debian VPS install) keep `127.0.0.1`. Set to `*` **only** when the app is reachable solely through a trusted reverse proxy (e.g. Docker Compose). Needed for correct per-IP rate limiting behind a proxy. |
+| `LATTIX_KEEPALIVE` | `75` | Idle HTTP keep-alive, seconds (`run.py`, container, systemd unit). Must exceed the reverse proxy's upstream keep-alive (60 s in the shipped Caddy/nginx configs), or pooled connections get closed under the proxy and surface as sporadic `502`s. |
+| `LATTIX_CORS_ORIGINS` | *(none)* | Extra comma-separated origins allowed to call the API cross-origin, or `*`. Only needed if you host the web client on a **different** origin; the bundled web app is same-origin, and desktop/extension origins are covered by the next variable. |
+| `LATTIX_CORS_ALLOW_LOCAL` | `1` | Allow the desktop apps (`http://localhost:*`, `http://127.0.0.1:*`) and the Chrome extension to use this relay remotely. Set `0` for a relay only its own web app should reach. |
 | `LATTIX_DOCS_URL` | `/api/docs` | Interactive API docs path. Set to empty (`LATTIX_DOCS_URL=`) to disable docs in production. |
 
 ## Fixed constants (in code)
@@ -35,7 +37,21 @@ These are not env-configurable but are worth knowing:
 - **Inline image previews:** limited to image MIME types under a fixed size cap,
   and only for messages whose signature verified. Off by default
   (**Settings → Media**).
-- **WebSocket reconnect:** exponential backoff, factor 1.6, capped at 20 s.
+- **WebSocket reconnect:** exponential backoff with ±20% jitter, factor 1.6,
+  capped at 20 s; immediate when the network or the tab comes back.
+- **WebSocket heartbeat:** ping every 25 s; no pong within 10 s drops and
+  reconnects. After any reconnect the client fetches what it missed.
+- **Request timeouts:** 30 s for API calls, 10 min for file transfers. Reads
+  (`GET`) retry twice on network errors and `502/503/504`; writes never retry.
+- **WebSocket auth wait:** 10 s for the first-frame `auth` message.
+
+## Client setting: relay server
+
+Which relay a client uses is chosen in the app, not by environment variable:
+the **Relay: … Change** link on the sign-in screen, or **Settings → Relay server
+→ Change…**. It is stored in the browser's `localStorage` (`lattix.serverUrl`)
+for that app's origin. Empty means the default — the relay the page was loaded
+from (web app, desktop apps) or `http://localhost:8000` (Chrome extension).
 
 ## Where data is stored
 

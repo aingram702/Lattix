@@ -1,5 +1,92 @@
 # Release Notes
 
+## 2.1.0
+
+A **remote-relay release**: choosing a relay is back in the interface for every
+build, and the client and relay are tuned for running behind a reverse proxy on
+a VPS. Cryptography, envelopes, vaults and backups are unchanged, and 2.1 clients
+and relays interoperate with 2.0 and 1.x in both directions.
+
+### Choosing a relay
+
+- **Relay server settings for every build.** The setting used to exist only in
+  the Chrome extension, so the web and desktop apps had no way to use another
+  relay. It is now under **Settings → Relay server** everywhere.
+- **Before signing in.** The sign-in screen shows which relay will be used and
+  whether it's online, with a **Change** link — so a relay can be picked before
+  an account exists or a vault is unlocked.
+- **Validation as you type.** `chat.example.com` becomes `https://…`; a pasted
+  `wss://…/ws` or `/api` URL is reduced to the relay base; plain `http://` over the
+  internet warns; an `http://` relay from an `https://` page is refused (the
+  browser would block it).
+- **Test connection** checks that the relay answers, is a Lattix relay, and that
+  WebSocket upgrades pass through the proxy — with a specific message for each
+  way it can fail.
+- **Moving to a new relay.** Unlocking an identity the relay doesn't know offers
+  to register the same keys there. A username held by someone else is reported.
+- **Fail fast.** Creating an account or unlocking checks the relay first,
+  instead of spending seconds on key generation and then failing.
+- **Share links and QR codes** point at the configured relay, not at a desktop
+  app's private `localhost` address.
+
+### Running through a proxy
+
+- **Automatic re-login.** The relay keeps sessions in memory, so a restart —
+  deploy, reboot — used to strand every open tab with `401`s and a WebSocket
+  retrying a dead token forever. Clients now sign back in with the identity
+  already unlocked, then retry. A 12-hour token expiry is handled the same way.
+- **Nothing lost across reconnects.** Envelopes pushed while a socket was down
+  were never delivered to that tab. After every reconnect the client now fetches
+  what's newer than what it holds, including new contacts and groups.
+- **Dead-socket detection.** The relay answers pings; a ping without a reply
+  within 10 s drops the socket and reconnects. Catches connections silently
+  killed by proxy idle timeouts, NAT or laptop sleep. Judged per ping, so a
+  background tab's throttled timers aren't mistaken for an outage.
+- **Faster recovery.** Jittered backoff, and an immediate reconnect when the
+  network comes back or the tab becomes visible.
+- **Session token out of URLs.** The WebSocket authenticates with its first frame
+  instead of `?token=`, which reverse proxies write to their access logs. The
+  query form still works for older clients.
+- **Timeouts and retries.** 30 s per API call, 10 min per file transfer. Reads
+  retry through the brief `502/503/504`s a proxy returns while the relay
+  restarts; writes never retry, so a message can't be sent twice.
+- **Readable errors** that name the relay instead of *Failed to fetch*.
+
+### Relay changes
+
+- **CORS for remote clients.** Desktop-app origins (`http://localhost:*`,
+  `http://127.0.0.1:*`) and Chrome extension origins are allowed by default
+  (`LATTIX_CORS_ALLOW_LOCAL=0` to turn off), with preflights cached for two hours.
+  Safe without an allowlist of sites because there are no cookies to ride.
+- **First-frame WebSocket auth**, `ready` and `pong` messages; bad tokens close
+  with `4401` after accept, so clients can tell "re-login" from "proxy broken".
+- **`/api/health` `features`** list.
+- **Cache headers:** `no-store` on `/api/*`, `no-cache` on the static client.
+- **Keep-alive** raised to 75 s (`LATTIX_KEEPALIVE`) in `run.py`, the container
+  and the systemd unit, above the proxies' 60 s upstream keep-alive; `run.py`
+  gains `--forwarded-allow-ips`. The container gets a `HEALTHCHECK`.
+
+### Deployment
+
+- **`deploy/vps/`** — one-command install on a Debian VPS (OVHcloud or any other):
+  sandboxed systemd service on `127.0.0.1`, Caddy or nginx + certbot, `ufw`,
+  idempotent `--update`. Tuned proxy configs: WebSocket timeouts, keep-alive
+  ordering, retries during restarts (Caddy), WebSockets kept across reloads, body
+  limit matched to `LATTIX_MAX_FILE_MB`, tokens stripped from access logs.
+- The Docker Compose `Caddyfile` gets the same tuning.
+
+### Tests
+
+New `scripts/ui_test_relay.mjs` (48 assertions) starts two relays and restarts
+one mid-run: CORS and cache headers, first-frame auth, the relay dialog from the
+sign-in screen and Settings, a cross-origin desktop page on a remote relay, live
+delivery, a relay restart with automatic re-login, a message missed while
+offline, moving an identity, and an unreachable relay. Point it through a real
+proxy with `LATTIX_PROXY_BASE`. All eleven suites pass directly and through both
+the shipped Caddy and nginx configurations over HTTPS.
+
+---
+
 ## 2.0.0
 
 Version 2.0 is a **usability, accessibility and performance release**.

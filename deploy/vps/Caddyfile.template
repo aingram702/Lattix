@@ -1,0 +1,73 @@
+# Lattix relay behind Caddy — native install on a Debian VPS.
+#
+# install-debian.sh renders this to /etc/caddy/Caddyfile, replacing
+# __DOMAIN__, __EMAIL__, __UPSTREAM__ and __MAX_BODY__. To edit by hand
+# afterwards:  sudo nano /etc/caddy/Caddyfile && sudo systemctl reload caddy
+#
+# Caddy obtains and renews the Let's Encrypt certificate on its own, and
+# proxies WebSocket upgrades (/ws) with no extra configuration.
+{
+	email __EMAIL__
+	# Keep established WebSockets open across `systemctl reload caddy` instead
+	# of dropping every connected client on each config change.
+	grace_period 10s
+}
+
+__DOMAIN__ {
+	# Compress text responses (the app, JSON). Encrypted blobs are
+	# application/octet-stream, which Caddy's default matcher leaves alone —
+	# ciphertext doesn't compress and would only burn CPU.
+	encode zstd gzip
+
+	# Largest encrypted upload + multipart overhead. Keep it slightly above
+	# LATTIX_MAX_FILE_MB so the relay, not the proxy, reports the limit.
+	request_body {
+		max_size __MAX_BODY__
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+	}
+
+	reverse_proxy __UPSTREAM__ {
+		# If the relay is restarting, hold requests for a few seconds and retry
+		# the connection instead of answering 502 at once. Only failed *dials*
+		# are retried, so a message POST is never sent twice.
+		lb_try_duration 10s
+		lb_try_interval 250ms
+
+		# Stream file downloads straight through rather than buffering them.
+		flush_interval -1
+
+		# On a config reload, let open WebSockets finish on the old config for
+		# up to 5 minutes; clients reconnect on their own after that.
+		stream_close_delay 5m
+
+		transport http {
+			dial_timeout 5s
+			# Shorter than uvicorn's --timeout-keep-alive (75s) so Caddy always
+			# retires an idle pooled connection before the relay closes it.
+			keepalive 60s
+		}
+	}
+
+	log {
+		output file /var/log/caddy/lattix-access.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+		format filter {
+			# Pre-2.1 clients put the session token in the /ws query string.
+			# Never write it to disk. (Authorization headers are already
+			# redacted by Caddy by default.)
+			request>uri query {
+				delete token
+			}
+		}
+	}
+}

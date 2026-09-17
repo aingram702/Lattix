@@ -99,6 +99,12 @@
       </form>
 
       <p class="auth-note">Your keys are generated on this device and encrypted with your password. The server only ever sees ciphertext.</p>
+
+      <div class="auth-relay" id="auth-relay">
+        <span id="auth-relay-dot" class="conn-dot" aria-hidden="true"></span>
+        <span class="auth-relay-text">Relay: <strong id="auth-relay-host">this server</strong> <span id="auth-relay-state" class="auth-relay-state">checking…</span></span>
+        <button type="button" id="auth-relay-change" class="link-btn">Change</button>
+      </div>
     </div>
   </section>
 
@@ -347,13 +353,14 @@
           </div>
         </div>
 
-        <div class="set-section" id="server-section" hidden>
+        <div class="set-section" id="server-section">
           <h4>Relay server</h4>
-          <label>Server URL
-            <input id="server-url" type="text" placeholder="http://localhost:8000" />
-          </label>
-          <div class="set-actions spaced-sm">
-            <button id="server-save" class="btn">Save &amp; reload</button>
+          <div class="set-row">
+            <div>
+              <div class="set-label" id="server-current">This server</div>
+              <div class="set-sub" id="server-current-sub">The relay that stores and forwards your encrypted messages.</div>
+            </div>
+            <button type="button" id="server-change-btn" class="btn">Change…</button>
           </div>
         </div>
 
@@ -388,6 +395,34 @@
           <div class="set-sub spaced-xs">Deletes this device's keys, chats, and settings, resetting Lattix to a fresh install.</div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Relay server — reachable from the sign-in screen and from Settings -->
+  <div id="server-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="server-title" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="server-title">Relay server</h3>
+        <button type="button" id="server-close" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <form id="server-form" autocomplete="off" novalidate>
+        <p class="fine spaced-below">The relay only stores public keys and ciphertext. Point Lattix at your own — for example a relay on a VPS behind Caddy or nginx.</p>
+        <label>Server URL
+          <input id="server-url" class="modal-input" type="text" inputmode="url" spellcheck="false"
+                 autocapitalize="off" placeholder="https://chat.example.com"
+                 aria-describedby="server-hint server-result" />
+        </label>
+        <p id="server-hint" class="fine"></p>
+        <div id="server-result" class="server-result" role="status" aria-live="polite" hidden></div>
+        <div class="set-actions spaced">
+          <button type="button" id="server-test" class="btn">Test connection</button>
+          <button type="button" id="server-reset" class="btn">Use default</button>
+        </div>
+        <div class="set-actions end spaced">
+          <button type="button" id="server-cancel" class="btn">Cancel</button>
+          <button type="submit" id="server-save" class="btn primary-btn">Save &amp; connect</button>
+        </div>
+      </form>
     </div>
   </div>
 

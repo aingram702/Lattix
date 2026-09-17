@@ -10,7 +10,7 @@
 ; Requires Inno Setup 6+ (https://jrsoftware.org/isinfo.php).
 
 #define MyAppName "Lattix"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "Lattix"
 #define MyAppExeName "Lattix.exe"
 

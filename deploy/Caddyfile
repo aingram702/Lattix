@@ -1,15 +1,52 @@
-# Caddy reverse proxy for Lattix.
+# Caddy reverse proxy for Lattix (Docker Compose).
 #
 # Automatic HTTPS (Let's Encrypt) for $LATTIX_DOMAIN, and WebSocket upgrades are
 # proxied transparently — no extra config needed for /ws. To set an ACME
-# contact email, add a global block:  { email you@example.com }
+# contact email, add to the global block:  email you@example.com
+# For a native (non-Docker) Debian install see deploy/vps/.
+{
+	# Keep open WebSockets through a config reload instead of dropping them.
+	grace_period 10s
+}
 
 {$LATTIX_DOMAIN} {
+	# Text only by Caddy's default matcher; ciphertext blobs aren't compressed.
 	encode zstd gzip
-	reverse_proxy lattix:8000
 
 	# Uploaded blobs can be up to LATTIX_MAX_FILE_MB; raise if you increase it.
 	request_body {
 		max_size 60MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	reverse_proxy lattix:8000 {
+		# Hold and retry the connection while the relay container restarts,
+		# instead of an instant 502. Only failed dials are retried.
+		lb_try_duration 10s
+		lb_try_interval 250ms
+		flush_interval -1
+		stream_close_delay 5m
+		transport http {
+			dial_timeout 5s
+			# Below the relay's 75s keep-alive, so pooled connections never race.
+			keepalive 60s
+		}
+	}
+
+	log {
+		output stdout
+		format filter {
+			# Pre-2.1 clients send the session token as /ws?token=…
+			request>uri query {
+				delete token
+			}
+		}
 	}
 }

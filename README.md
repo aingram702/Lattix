@@ -214,7 +214,7 @@ The `client/` directory doubles as an unpacked MV3 extension:
 
 1. Run a Lattix relay (`python run.py`, or install a standalone app).
 2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the `client/` folder.
-3. Click the Lattix toolbar icon, then open **Settings → Relay server** and point it at your server URL (default `http://localhost:8000`).
+3. Click the Lattix toolbar icon, then click **Change** next to *Relay: …* on the sign-in screen and point it at your server URL (default `http://localhost:8000`). Once signed in it's under **Settings → Relay server**.
 
 All crypto still runs locally; the extension only talks to the relay you configure.
 
@@ -224,9 +224,12 @@ All crypto still runs locally; the extension only talks to the relay you configu
 
 To run Lattix as a public service over HTTPS so anyone can reach it, see **[DEPLOYMENT.md](DEPLOYMENT.md)**. It covers:
 
+- A **one-command Debian VPS install** (OVHcloud or any provider) — hardened systemd service behind tuned Caddy or nginx configs with Let's Encrypt: [`deploy/vps/`](deploy/vps/README.md).
 - A **one-command Docker Compose** setup with automatic HTTPS (Caddy + Let's Encrypt) and WSS for your own server or VPS.
 - Managed platforms — **Render**, **Fly.io**, **Railway** — with persistent-volume and health-check config.
 - A production [`Dockerfile`](Dockerfile) and a `docker-image` CI workflow that publishes a ready-to-deploy image to GHCR.
+
+The desktop apps and the Chrome extension connect to a hosted relay from **Relay: … Change** on the sign-in screen or **Settings → Relay server** — with a built-in connection test.
 
 HTTPS is **required** (browser crypto needs a secure context), and the relay runs as a **single instance** — sessions and real-time delivery are kept in memory, which is ideal for a family or team but not horizontally scaled.
 
@@ -253,6 +256,7 @@ Lattix/                        # repository root (this is what you clone)
 ├── .github/workflows/         # CI that builds each OS installer
 ├── run.py                     # launcher (uvicorn wrapper)
 ├── requirements.txt
+├── deploy/                    # Docker Compose + Caddy, Render, Fly, and vps/ (Debian install)
 ├── server/                    # zero-knowledge relay (FastAPI)
 │   ├── main.py                #   REST + WebSocket + groups + static hosting
 │   ├── database.py            #   SQLite: users, envelopes, groups, blobs
@@ -263,8 +267,8 @@ Lattix/                        # repository root (this is what you clone)
 │   ├── js/
 │   │   ├── app.js             #   UI + conversation/group logic
 │   │   ├── crypto.js          #   E2E crypto (ML-KEM / ML-DSA / AES-GCM, backups)
-│   │   ├── api.js             #   REST + WebSocket client (reconnect backoff)
-│   │   ├── config.js          #   configurable relay URL (for the extension)
+│   │   ├── api.js             #   REST + WebSocket client (timeouts, re-login, heartbeat, resync)
+│   │   ├── config.js          #   relay server setting (every build) + URL validation
 │   │   ├── preload.js         #   applies the stored theme before first paint
 │   │   ├── theme.js, sound.js #   appearance + notification tones
 │   │   └── qr.js              #   offline QR-code generator
@@ -282,7 +286,7 @@ Lattix/                        # repository root (this is what you clone)
 ├── scripts/
 │   ├── build_vendor.sh        #   rebuild the vendored crypto bundle
 │   ├── integration_test.mjs   #   full server + crypto end-to-end test
-│   ├── ui_test*.mjs           #   nine headless-browser UI suites (Playwright + axe)
+│   ├── ui_test*.mjs           #   ten headless-browser UI suites (Playwright + axe)
 │   └── lib/harness.mjs        #   shared signup/unlock test helpers
 ├── docs/screenshots/
 └── data/                      # SQLite database (created at runtime)
@@ -297,8 +301,8 @@ CI workflows that build each OS installer live under
 
 ### Tests
 
-Lattix ships **ten suites, 234 assertions** — one protocol suite that drives the
-real server with the real crypto module, and nine browser suites that drive the
+Lattix ships **eleven suites, 282 assertions** — one protocol suite that drives the
+real server with the real crypto module, and ten browser suites that drive the
 real UI in headless Chromium.
 
 | Suite | Covers |
@@ -313,6 +317,7 @@ real UI in headless Chromium.
 | `ui_test_auth.mjs` | Signup guards, strength meter, vault-overwrite warning. |
 | `ui_test_theme.mjs` | System theme, the anti-flash bootstrap, light-mode contrast. |
 | `ui_test_perf.mjs` | Render batching, the render window, the expiry sweep. |
+| `ui_test_relay.mjs` | Relay settings from sign-in and Settings, a remote relay from a cross-origin page, CORS/cache headers, first-frame WebSocket auth, restart with automatic re-login, missed-message resync, moving an identity. Starts its own relays; `LATTIX_PROXY_BASE` routes it through a reverse proxy. |
 
 ```bash
 pip install -r requirements.txt

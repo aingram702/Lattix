@@ -1,0 +1,115 @@
+# Lattix relay behind nginx — native install on a Debian VPS.
+#
+# install-debian.sh --proxy nginx renders this to
+# /etc/nginx/sites-available/lattix.conf, replacing __DOMAIN__, __UPSTREAM__
+# and __MAX_BODY__, after obtaining a Let's Encrypt certificate with certbot.
+# Renewal is handled by certbot's systemd timer (with a reload hook).
+#
+# Works on Debian 12 (nginx 1.22) and Debian 13 (nginx 1.26).
+
+map $http_upgrade $lattix_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# Pre-2.1 clients put the session token in the /ws query string; keep it out
+# of the access log.
+map $request_uri $lattix_log_uri {
+    "~^(?<lattix_path>[^?]*)\?(.*&)?token=" "$lattix_path?token=[redacted]";
+    default $request_uri;
+}
+log_format lattix '$remote_addr [$time_local] "$request_method $lattix_log_uri $server_protocol" '
+                  '$status $body_bytes_sent $request_time "$http_user_agent"';
+
+upstream lattix_relay {
+    server __UPSTREAM__;
+    # Reuse connections to the relay instead of a new TCP handshake per request.
+    keepalive 32;
+    # Must stay below uvicorn's --timeout-keep-alive (75s), or nginx can pick a
+    # pooled connection the relay is closing and return a sporadic 502.
+    keepalive_timeout 60s;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/lattix-acme;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name __DOMAIN__;
+
+    ssl_certificate     /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:lattix_tls:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    access_log /var/log/nginx/lattix.access.log lattix;
+    error_log  /var/log/nginx/lattix.error.log warn;
+
+    server_tokens off;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+
+    # Largest encrypted upload + multipart overhead. Slightly above
+    # LATTIX_MAX_FILE_MB so the relay, not nginx, reports the limit.
+    client_max_body_size __MAX_BODY__;
+    client_body_buffer_size 1m;
+
+    # Text only — ciphertext (application/octet-stream) doesn't compress.
+    gzip on;
+    gzip_proxied any;
+    gzip_min_length 1024;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    # Real-time delivery. Upgraded connections are idle between messages; the
+    # client pings every 25s, so an hour-long read timeout never cuts a live
+    # socket but still reaps abandoned ones.
+    location = /ws {
+        proxy_pass http://lattix_relay;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $lattix_connection_upgrade;
+        proxy_set_header Host $host;
+        # Overwrite, don't append: the relay trusts this header from 127.0.0.1.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location / {
+        proxy_pass http://lattix_relay;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        # Buffer uploads in nginx so a slow client can't hold the single relay
+        # process; stream downloads out as they arrive.
+        proxy_request_buffering on;
+        proxy_buffering off;
+        # Retry reads on a dead pooled connection; never re-send a POST.
+        proxy_next_upstream error timeout;
+        proxy_next_upstream_tries 2;
+    }
+}

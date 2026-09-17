@@ -17,8 +17,8 @@ python run.py --reload        # http://localhost:8000, auto-reload
 
 ## Test suites
 
-`scripts/` holds **ten suites, 234 assertions**: one protocol suite driving the
-real server with the real crypto module, and nine browser suites driving the real
+`scripts/` holds **eleven suites, 282 assertions**: one protocol suite driving the
+real server with the real crypto module, and ten browser suites driving the real
 UI in headless Chromium (Playwright + axe-core).
 
 | Suite | Covers |
@@ -33,6 +33,7 @@ UI in headless Chromium (Playwright + axe-core).
 | `ui_test_auth.mjs` | Signup guards, strength meter, vault-overwrite warning. |
 | `ui_test_theme.mjs` | System theme, the anti-flash bootstrap, light-mode contrast. |
 | `ui_test_perf.mjs` | Render batching, the render window, the expiry sweep. |
+| `ui_test_relay.mjs` | Relay settings from sign-in and Settings, a remote relay from a cross-origin page, CORS/cache headers, first-frame WebSocket auth, restart with automatic re-login, missed-message resync, moving an identity. Starts its own relays; `LATTIX_PROXY_BASE` routes it through a reverse proxy. |
 
 ```bash
 pip install -r requirements.txt

@@ -1,15 +1,15 @@
 # Render Blueprint for Lattix.
 #
 # Render reads render.yaml from the REPOSITORY ROOT, so copy this file there
-# (this repo keeps the app under Lattix/, hence rootDir below). Then in Render:
-# New + -> Blueprint -> pick your repo. A persistent disk requires a paid plan.
+# (the app — Dockerfile, server/, client/ — lives at the repo root). Then in
+# Render: New + -> Blueprint -> pick your repo. A persistent disk requires a
+# paid plan.
 
 services:
   - type: web
     name: lattix
     runtime: docker
     plan: starter
-    rootDir: Lattix
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /api/health

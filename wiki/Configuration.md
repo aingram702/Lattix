@@ -17,6 +17,8 @@ files to edit.
 | `LATTIX_CORS_ORIGINS` | *(none)* | Extra comma-separated origins allowed to call the API cross-origin, or `*`. Only needed if you host the web client on a **different** origin; the bundled web app is same-origin, and desktop/extension origins are covered by the next variable. |
 | `LATTIX_CORS_ALLOW_LOCAL` | `1` | Allow the desktop apps (`http://localhost:*`, `http://127.0.0.1:*`) and the Chrome extension to use this relay remotely. Set `0` for a relay only its own web app should reach. |
 | `LATTIX_DOCS_URL` | `/api/docs` | Interactive API docs path. Set to empty (`LATTIX_DOCS_URL=`) to disable docs in production. |
+| `LATTIX_RATE_LIMIT_MAX` | `10` | Sign-in/registration attempts allowed per IP per window. Raise it for a household or office behind one NAT address; `0` disables auth rate limiting (test relays only). |
+| `LATTIX_RATE_LIMIT_WINDOW` | `300` | Length of that window, in seconds. |
 
 ## Fixed constants (in code)
 
@@ -24,7 +26,9 @@ These are not env-configurable but are worth knowing:
 
 - **Token lifetime:** 12 hours (`TOKEN_TTL`).
 - **Auth hashing:** PBKDF2-SHA-256, 200,000 iterations, per-user 16-byte salt.
-- **Rate limit:** 10 attempts per 5-minute window, per IP, on register/login.
+- **Orphaned file blobs:** the background sweep runs every 60 s and deletes any
+  encrypted blob that no message references, once it is more than 6 hours old
+  (the grace period covers an upload whose message hasn't been posted yet).
 - **Vault & backup KDF:** PBKDF2-SHA-256, 250,000 iterations (client-side).
 - **Message payload cap:** ~2 MB of JSON (file *contents* go through
   `/api/files`, not the message payload).

@@ -24,6 +24,7 @@ NOT the root of trust for message security.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -31,6 +32,7 @@ import secrets
 import time
 import uuid
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import (
@@ -40,6 +42,7 @@ from fastapi import (
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from . import database as db
 from .models import (
     RegisterRequest, LoginRequest, PublicUser, SendMessageRequest,
@@ -52,10 +55,15 @@ from .models import (
 # --------------------------------------------------------------------------- #
 CLIENT_DIR = os.environ.get("LATTIX_CLIENT_DIR") or \
     os.path.join(os.path.dirname(os.path.dirname(__file__)), "client")
-MAX_FILE_BYTES = int(os.environ.get("LATTIX_MAX_FILE_MB", "50")) * 1024 * 1024
 FILE_READ_CHUNK = 1024 * 1024
 TOKEN_TTL = 60 * 60 * 12  # 12 hours
 PBKDF2_ITERS = 200_000
+# How often the background sweep runs, and how long an uploaded blob that no
+# message references yet is kept before it is treated as abandoned. The grace
+# period matters because /api/files is uploaded *before* the message that
+# points at it is posted.
+SWEEP_INTERVAL = 60
+ORPHAN_FILE_GRACE = 6 * 60 * 60  # 6 hours
 # How long a WebSocket may stay open without authenticating (see /ws).
 WS_AUTH_TIMEOUT = 10
 # A dummy salt used to run the password hash on a non-existent user too, so
@@ -65,7 +73,32 @@ _DUMMY_LOGIN_SALT = secrets.token_hex(16)
 # API docs (/api/docs) can be disabled in production by setting LATTIX_DOCS_URL="".
 _DOCS_URL = os.environ.get("LATTIX_DOCS_URL", "/api/docs") or None
 
-app = FastAPI(title="Lattix", version="2.1.0", docs_url=_DOCS_URL)
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    """Read a positive integer from the environment, ignoring junk values."""
+    try:
+        value = int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+MAX_FILE_BYTES = _env_int("LATTIX_MAX_FILE_MB", 50) * 1024 * 1024
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    db.init_db()
+    sweeper = asyncio.create_task(_sweep_loop())
+    try:
+        yield
+    finally:
+        sweeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweeper
+
+
+app = FastAPI(title="Lattix", version=__version__, docs_url=_DOCS_URL, lifespan=lifespan)
 
 # --------------------------------------------------------------------------- #
 # CORS — letting remote clients reach this relay
@@ -142,20 +175,16 @@ class _CacheHeaders:
 app.add_middleware(_CacheHeaders)
 
 
-@app.on_event("startup")
-async def _startup() -> None:
-    db.init_db()
-    asyncio.create_task(_sweep_loop())
-
-
 async def _sweep_loop() -> None:
-    """Periodically purge disappearing messages whose deadline has passed."""
+    """Periodically purge disappearing messages whose deadline has passed, and
+    the encrypted blobs left behind by file messages that have gone with them."""
     while True:
         try:
-            db.delete_expired()
+            await asyncio.to_thread(db.delete_expired)
+            await asyncio.to_thread(db.delete_orphan_files, ORPHAN_FILE_GRACE)
         except Exception:
             pass
-        await asyncio.sleep(60)
+        await asyncio.sleep(SWEEP_INTERVAL)
 
 
 def _expiry(ttl: Optional[int]) -> Optional[float]:
@@ -213,16 +242,39 @@ def _hash_secret(secret: str, salt_hex: str) -> str:
 # --------------------------------------------------------------------------- #
 # Basic in-memory rate limiting for auth endpoints (per-IP sliding window)
 # --------------------------------------------------------------------------- #
-RATE_LIMIT_WINDOW = 300  # seconds
-RATE_LIMIT_MAX = 10  # attempts per window per (scope, ip)
+# A whole household or office shares one public IP behind NAT, so the defaults
+# are deliberately overridable — ten sign-ins per five minutes is tight for a
+# family relay, and a test suite blows through it in seconds.
+#
+#   LATTIX_RATE_LIMIT_MAX      attempts per window per (scope, ip)   [10]
+#   LATTIX_RATE_LIMIT_WINDOW   window length in seconds              [300]
+#   LATTIX_RATE_LIMIT_MAX=0    disables auth rate limiting entirely
+RATE_LIMIT_WINDOW = _env_int("LATTIX_RATE_LIMIT_WINDOW", 300)
+RATE_LIMIT_MAX = _env_int("LATTIX_RATE_LIMIT_MAX", 10, minimum=0)
+# Stop the bucket map from growing without bound: a relay on the open internet
+# is scanned by a lot of distinct IPs, and every one of them used to leave an
+# entry behind forever.
+RATE_BUCKET_LIMIT = 10_000
 
 _rate_buckets: dict[str, deque] = defaultdict(deque)
 
 
+def _prune_rate_buckets(now: float) -> None:
+    for key, bucket in list(_rate_buckets.items()):
+        while bucket and now - bucket[0] > RATE_LIMIT_WINDOW:
+            bucket.popleft()
+        if not bucket:
+            _rate_buckets.pop(key, None)
+
+
 def _enforce_rate_limit(request: Request, scope: str) -> None:
+    if not RATE_LIMIT_MAX:
+        return
     ip = request.client.host if request.client else "unknown"
     key = f"{scope}:{ip}"
     now = time.time()
+    if len(_rate_buckets) > RATE_BUCKET_LIMIT:
+        _prune_rate_buckets(now)
     bucket = _rate_buckets[key]
     while bucket and now - bucket[0] > RATE_LIMIT_WINDOW:
         bucket.popleft()
@@ -296,6 +348,11 @@ def search_users(q: str = "", me: str = Depends(require_user)) -> list[dict]:
 @app.get("/api/me")
 def me(username: str = Depends(require_user)) -> dict:
     user = db.get_user(username)
+    if not user:
+        # The account was deleted (from another session, or straight out of the
+        # database) while this token was still live. 401 tells the client to
+        # re-authenticate instead of handing it a 500.
+        raise HTTPException(401, "Account no longer exists")
     return {
         "username": username,
         "fingerprint": user["fingerprint"],
@@ -421,6 +478,15 @@ async def remove_member(
         raise HTTPException(403, "Not allowed")
     prior = [m["username"] for m in group["members"]]
     db.remove_group_member(group_id, username)
+    # An owner who leaves used to strand the group: nobody could add or remove
+    # members again. Hand ownership to the longest-standing remaining member,
+    # and drop the group entirely once the last one leaves.
+    if username == group["owner"]:
+        successor = db.oldest_group_member(group_id)
+        if successor:
+            db.set_group_owner(group_id, successor)
+        else:
+            db.delete_group(group_id)
     await manager.notify_group_members(
         prior, {"type": "group", "action": "members", "group_id": group_id},
     )
@@ -468,6 +534,11 @@ async def upload_file(
     size: int = Form(...),
     me: str = Depends(require_user),
 ) -> dict:
+    # `size` is the *plaintext* length the client reports, kept as display
+    # metadata only. It is attacker-controlled, so bound it rather than storing
+    # whatever arrives (a negative or absurd value would render as nonsense).
+    if size < 0 or size > MAX_FILE_BYTES:
+        raise HTTPException(400, "Invalid file size")
     # Read in bounded chunks so an oversized upload is rejected before it can
     # exhaust server memory/disk, rather than after buffering it in full.
     data = bytearray()
@@ -517,6 +588,9 @@ class ConnectionManager:
             conns.discard(ws)
             if not conns:
                 self.active.pop(username, None)
+
+    def is_online(self, username: str) -> bool:
+        return bool(self.active.get(username))
 
     async def _send_to(self, username: str, msg: dict) -> None:
         for ws in list(self.active.get(username, set())):
@@ -631,7 +705,10 @@ async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
         pass
     finally:
         manager.disconnect(username, ws)
-        await manager.presence(username, False)
+        # Only announce "offline" once the user's *last* socket has gone.
+        # Closing one of several tabs used to tell every contact they had left.
+        if not manager.is_online(username):
+            await manager.presence(username, False)
 
 
 # --------------------------------------------------------------------------- #

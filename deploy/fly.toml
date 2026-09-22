@@ -1,4 +1,5 @@
-# Fly.io config for Lattix. Copy this to the Lattix/ directory, then:
+# Fly.io config for Lattix. Copy this to the repository root (next to the
+# Dockerfile), then:
 #   fly launch --no-deploy      # (or `fly apps create lattix-yourname`)
 #   fly volumes create lattix_data --size 1 --region iad
 #   fly deploy

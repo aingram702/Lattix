@@ -7,11 +7,23 @@ client's encryption scheme.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator
 
 USERNAME_RE = r"^[a-zA-Z0-9_.-]{3,32}$"
+# The public directory is writable by anyone who can register, so the key
+# material it accepts is bounded and shape-checked. The real sizes are
+# ML-KEM-768: 1184 bytes (~1580 base64 chars) and ML-DSA-65: 1952 bytes
+# (~2604); the caps below leave room without letting the table be stuffed.
+MAX_KEM_KEY_CHARS = 4096
+MAX_DSA_KEY_CHARS = 8192
+FINGERPRINT_RE = r"^[0-9a-f]{64}$"   # hex SHA-256 of the two public keys
+MAX_AUTH_SECRET_CHARS = 512
+# Group icons are a single emoji; a few code points allow for ZWJ sequences.
+MAX_GROUP_ICON_CHARS = 8
 
 # Envelope payloads carry small crypto material (ciphertext, wrapped keys,
 # signatures) — actual file content goes through /api/files instead. Cap the
@@ -39,6 +51,14 @@ def _check_ttl(v: Optional[int]) -> Optional[int]:
     return v
 
 
+def _check_base64(v: str) -> str:
+    try:
+        base64.b64decode(v, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("expected base64-encoded key material")
+    return v
+
+
 def _check_avatar(v: Optional[str]) -> Optional[str]:
     if v is None:
         return None
@@ -51,16 +71,21 @@ def _check_avatar(v: Optional[str]) -> Optional[str]:
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., pattern=USERNAME_RE)
-    kem_public_key: str
-    dsa_public_key: str
-    fingerprint: str
-    auth_secret: str
+    kem_public_key: str = Field(..., min_length=1, max_length=MAX_KEM_KEY_CHARS)
+    dsa_public_key: str = Field(..., min_length=1, max_length=MAX_DSA_KEY_CHARS)
+    fingerprint: str = Field(..., pattern=FINGERPRINT_RE)
+    auth_secret: str = Field(..., min_length=1, max_length=MAX_AUTH_SECRET_CHARS)
     avatar: Optional[str] = None
 
     @field_validator("username")
     @classmethod
     def lower(cls, v: str) -> str:
         return v.lower()
+
+    @field_validator("kem_public_key", "dsa_public_key")
+    @classmethod
+    def base64_key(cls, v: str) -> str:
+        return _check_base64(v)
 
     @field_validator("avatar")
     @classmethod
@@ -70,7 +95,7 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     username: str = Field(..., pattern=USERNAME_RE)
-    auth_secret: str
+    auth_secret: str = Field(..., min_length=1, max_length=MAX_AUTH_SECRET_CHARS)
 
     @field_validator("username")
     @classmethod
@@ -143,13 +168,24 @@ class SendFileMessageRequest(BaseModel):
 
 class CreateGroupRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=64)
-    members: list[str] = Field(default_factory=list)
-    icon: Optional[str] = Field(default=None, max_length=8)  # emoji only
+    # Every group message is wrapped once per member, so a huge roster is a
+    # cost the sender pays on every send. Cap it at something a relay of this
+    # shape can serve comfortably.
+    members: list[str] = Field(default_factory=list, max_length=256)
+    icon: Optional[str] = Field(default=None, max_length=MAX_GROUP_ICON_CHARS)  # emoji only
 
     @field_validator("members")
     @classmethod
     def lower_members(cls, v: list[str]) -> list[str]:
-        return [m.lower() for m in v]
+        # Normalise and de-duplicate while preserving the order given.
+        seen: set[str] = set()
+        out: list[str] = []
+        for m in v:
+            u = m.lower()
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out
 
 
 class AddMemberRequest(BaseModel):

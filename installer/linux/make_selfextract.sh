@@ -12,7 +12,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)   # project root (…/Lattix)
 cd "$ROOT"
 
 APP_DIR=${1:-dist/Lattix}
-VERSION=${LATTIX_VERSION:-1.1.0}
+VERSION=${LATTIX_VERSION:-2.1.0}
 ARCH=$(uname -m)
 OUTDIR=installer/linux/Output
 OUT="$OUTDIR/Lattix-$VERSION-$ARCH.run"

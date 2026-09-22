@@ -206,6 +206,13 @@ LATTIX_DOCS_URL=
 # LATTIX_CORS_ORIGINS=https://lattix.example.org
 LATTIX_CORS_ORIGINS=
 LATTIX_CORS_ALLOW_LOCAL=1
+
+# Sign-in / registration attempts allowed per IP per window (seconds). A whole
+# household or office shares one public address, so raise this if legitimate
+# users start seeing "Too many attempts". Never set the max to 0 here — that
+# turns auth rate limiting off entirely.
+LATTIX_RATE_LIMIT_MAX=10
+LATTIX_RATE_LIMIT_WINDOW=300
 EOF
   chown root:"$SERVICE_USER" "$ENV_FILE"
   chmod 0640 "$ENV_FILE"

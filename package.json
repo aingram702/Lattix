@@ -1,0 +1,17 @@
+{
+  "name": "lattix",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Test harness for the Lattix client. The app itself ships no npm dependencies — client/ is dependency-free and client/vendor/lattix-pqc.js is a checked-in offline build (see scripts/build_vendor.sh).",
+  "scripts": {
+    "test": "node scripts/integration_test.mjs",
+    "test:ui": "node scripts/ui_test.mjs",
+    "test:all": "node scripts/run_all_tests.mjs",
+    "build:vendor": "bash scripts/build_vendor.sh"
+  },
+  "devDependencies": {
+    "axe-core": "^4.10.2",
+    "playwright": "^1.49.1"
+  }
+}

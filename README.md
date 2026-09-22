@@ -285,7 +285,9 @@ Lattix/                        # repository root (this is what you clone)
 │   └── macos/                 #   macOS: .dmg disk image
 ├── scripts/
 │   ├── build_vendor.sh        #   rebuild the vendored crypto bundle
+│   ├── run_all_tests.mjs      #   starts a scratch relay and runs every suite
 │   ├── integration_test.mjs   #   full server + crypto end-to-end test
+│   ├── server_test.mjs        #   relay rules: validation, authz, presence
 │   ├── ui_test*.mjs           #   ten headless-browser UI suites (Playwright + axe)
 │   └── lib/harness.mjs        #   shared signup/unlock test helpers
 ├── docs/screenshots/
@@ -301,13 +303,14 @@ CI workflows that build each OS installer live under
 
 ### Tests
 
-Lattix ships **eleven suites, 282 assertions** — one protocol suite that drives the
-real server with the real crypto module, and ten browser suites that drive the
-real UI in headless Chromium.
+Lattix ships **twelve suites, 305 assertions** — two that drive the real server
+with the real crypto module, and ten browser suites that drive the real UI in
+headless Chromium.
 
 | Suite | Covers |
 |---|---|
 | `integration_test.mjs` | Protocol: registration, login, the key directory, encrypted messaging, plaintext-leak checks, sender self-decryption, tamper rejection, the encrypted-file round-trip, live WebSocket delivery. |
+| `server_test.mjs` | Relay rules: directory input validation, file-blob access control, group ownership succession, presence across multiple sessions, session invalidation. |
 | `ui_test.mjs` | Rendering, grouping, date separators, scroll anchoring, failed-send recovery. |
 | `ui_test_media.mjs` | Encrypted image round-trip, previews, lightbox, group rendering. |
 | `ui_test_a11y.mjs` | axe-core WCAG 2.1 A/AA over every theme, plus a keyboard-only walkthrough. |
@@ -321,17 +324,25 @@ real UI in headless Chromium.
 
 ```bash
 pip install -r requirements.txt
-npm i -D playwright axe-core && npx playwright install chromium
+npm install && npx playwright install chromium
 
-# one relay per suite — see the note below
-LATTIX_DB=/tmp/lattix-test.db python run.py --no-browser --port 8111 &
-LATTIX_BASE=http://127.0.0.1:8111 node scripts/integration_test.mjs
-LATTIX_BASE=http://127.0.0.1:8111 node scripts/ui_test.mjs
+# everything, against a throwaway relay it starts and cleans up itself
+node scripts/run_all_tests.mjs        # or: npm run test:all
 ```
 
-> **Give each suite its own relay and database.** `/api/register` is rate-limited
-> per IP and the buckets live in the server process, so consecutive runs against
-> one relay start returning `429`. Restarting the relay clears them.
+To run one suite by hand, point it at a relay you started yourself:
+
+```bash
+LATTIX_DB=/tmp/lattix-test.db LATTIX_RATE_LIMIT_MAX=0 \
+  python run.py --no-browser --port 8111 &
+LATTIX_BASE=http://127.0.0.1:8111 node scripts/integration_test.mjs
+```
+
+> **`LATTIX_RATE_LIMIT_MAX=0` matters.** `/api/register` and `/api/login` are
+> rate-limited per IP (10 attempts per 5 minutes by default) and the buckets
+> live in the server process, so the suites — which create dozens of accounts
+> from one address — otherwise start getting `429`. `run_all_tests.mjs` sets it
+> for the relay it starts. Never set it on a public relay.
 
 The browser suites assert *behaviour* — what the DOM actually does — rather than
 screenshots, so they stay meaningful on a loaded CI box.

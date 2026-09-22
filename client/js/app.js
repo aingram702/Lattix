@@ -120,9 +120,14 @@ function toast(msg, kind = "info") {
   setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3500);
 }
 function download(name, text, type = "application/json") {
-  const a = el("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = el("a", { href: url, download: name, style: "display:none" });
+  // Firefox ignores a click on an anchor that isn't in the document, and
+  // revoking the URL in the same tick can cancel a download that hasn't
+  // started reading the blob yet — so attach, click, then clean up after.
+  document.body.append(a);
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 0);
 }
 
 // Render an avatar into an existing node (image if available, else colored initial).
@@ -1099,10 +1104,16 @@ async function selectConversation(cid) {
 
   if (c.type === "group") {
     try { await ensureGroupLoaded(c.id); } catch (_) {}
-    const g = c.meta;
-    fillAvatar($("#peer-avatar"), { name: g.name, group: true, icon: g.icon });
-    $("#peer-name").textContent = "👥 " + g.name;
-    $("#peer-status").textContent = `${g.members.length} member${g.members.length === 1 ? "" : "s"}`;
+    // ensureGroupLoaded may have failed (relay unreachable), leaving meta as
+    // the stub ensureGroupConvo created. Render what we have rather than
+    // throwing on g.members and leaving the header half-populated.
+    const g = c.meta || {};
+    const members = g.members || [];
+    fillAvatar($("#peer-avatar"), { name: g.name || "Group", group: true, icon: g.icon });
+    $("#peer-name").textContent = "👥 " + (g.name || "Group");
+    $("#peer-status").textContent = members.length
+      ? `${members.length} member${members.length === 1 ? "" : "s"}`
+      : "members unavailable";
     $("#peer-status").className = "peer-status";
     $("#verify-peer-btn").textContent = "Info";
     await loadGroup(c.id);
@@ -1252,11 +1263,28 @@ async function onGroupEvent(msg) {
       ensureGroupConvo(g);
       renderContacts();
     } else if (msg.action === "members") {
-      const g = await api.getGroup(msg.group_id).catch(() => null);
-      if (g) { ensureGroupConvo(g); if (state.current === groupCid(msg.group_id)) selectConversation(state.current); }
-      else { // we were removed
+      let g = null, removed = false;
+      try {
+        g = await api.getGroup(msg.group_id);
+      } catch (err) {
+        // The relay answers 404 for a group you're no longer a member of.
+        // Anything else — a timeout, a proxy hiccup, a 5xx — says nothing
+        // about membership, and dropping the conversation on one of those
+        // would silently lose a group the user is still in.
+        removed = err && err.status === 404;
+        if (!removed) return;
+      }
+      if (g) {
+        ensureGroupConvo(g);
+        if (state.current === groupCid(msg.group_id)) selectConversation(state.current);
+      } else {
         delete state.convos[groupCid(msg.group_id)];
-        if (state.current === groupCid(msg.group_id)) { state.current = null; $("#conversation").hidden = true; $("#empty-state").hidden = false; }
+        if (state.current === groupCid(msg.group_id)) {
+          state.current = null;
+          $("#conversation").hidden = true;
+          $("#empty-state").hidden = false;
+          document.body.classList.remove("chat-open");
+        }
       }
       renderContacts();
     }
@@ -1853,11 +1881,15 @@ function wireGroupModals() {
 }
 
 async function openGroupInfo(convo) {
-  await ensureGroupLoaded(convo.id).catch(() => {});
+  try {
+    await ensureGroupLoaded(convo.id);
+  } catch (_) {
+    if (!convo.meta?.members) return toast("Could not load group details", "error");
+  }
   const g = convo.meta;
   const me = state.identity.username;
   const owner = g.owner === me;
-  $("#gi-title").textContent = g.name;
+  $("#gi-title").textContent = g.name || "Group";
   const box = $("#gi-members"); box.innerHTML = "";
   box.append(el("div", { class: "set-sub" }, `${g.members.length} members${owner ? " · you are the owner" : ""}`));
   for (const m of g.members) {
@@ -1916,12 +1948,15 @@ function drawQr(canvas, text) {
   const size = qr.size;
   const quiet = 4;
   const total = size + quiet * 2;
-  const scale = Math.max(2, Math.floor(canvas.width / total));
+  // A long relay URL pushes the QR to a higher version (more modules). Never
+  // let the drawing overflow the canvas — an off-canvas, clipped code doesn't
+  // scan at all, whereas a 1px module still does on a decent camera.
+  const scale = Math.max(1, Math.floor(canvas.width / total));
   const ctx = canvas.getContext("2d");
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#0b0b0f";
-  const off = Math.floor((canvas.width - total * scale) / 2);
+  const off = Math.max(0, Math.floor((canvas.width - total * scale) / 2));
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       if (qr.getModule(x, y)) {

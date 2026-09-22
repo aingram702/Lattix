@@ -278,6 +278,27 @@ def delete_expired() -> None:
         conn.commit()
 
 
+def delete_orphan_files(grace_seconds: float) -> int:
+    """Drop encrypted blobs no message points at any more.
+
+    A file row outlives the envelope that referenced it — disappearing messages
+    expire, accounts are deleted, groups are dismantled — and nothing used to
+    reclaim the space, so the database grew forever. `grace_seconds` protects
+    blobs that were only just uploaded: /api/files is called *before* the
+    message that references it is posted.
+    """
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            "DELETE FROM files WHERE created_at < ? "
+            "AND id NOT IN (SELECT file_id FROM envelopes WHERE file_id IS NOT NULL) "
+            "AND id NOT IN (SELECT file_id FROM group_envelopes WHERE file_id IS NOT NULL)",
+            (time.time() - grace_seconds,),
+        )
+        conn.commit()
+        return cur.rowcount or 0
+
+
 def _row_to_envelope(r: sqlite3.Row) -> dict:
     return {
         "id": r["id"],
@@ -373,6 +394,34 @@ def add_group_member(group_id: int, username: str) -> None:
             "INSERT OR IGNORE INTO group_members (group_id, username, joined_at) VALUES (?,?,?)",
             (group_id, username, time.time()),
         )
+        conn.commit()
+
+
+def oldest_group_member(group_id: int) -> Optional[str]:
+    """The member who has been in the group longest — the natural successor
+    when the owner leaves."""
+    with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT username FROM group_members WHERE group_id = ? "
+            "ORDER BY joined_at ASC, username ASC LIMIT 1",
+            (group_id,),
+        ).fetchone()
+        return row["username"] if row else None
+
+
+def set_group_owner(group_id: int, username: str) -> None:
+    with _lock:
+        conn = _connect()
+        conn.execute("UPDATE groups SET owner = ? WHERE id = ?", (username, group_id))
+        conn.commit()
+
+
+def delete_group(group_id: int) -> None:
+    """Drop a group and, by cascade, its membership rows and envelopes."""
+    with _lock:
+        conn = _connect()
+        conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
         conn.commit()
 
 

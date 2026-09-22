@@ -39,6 +39,8 @@ file, "persistence" just means **one durable volume** mounted at `/data`.
 | `LATTIX_CORS_ORIGINS` | *(none)* | Extra comma-separated origins allowed cross-origin (or `*`). Only needed if you host the web client on another origin. |
 | `LATTIX_CORS_ALLOW_LOCAL` | `1` | Lets the desktop apps (`http://localhost:*`) and the Chrome extension use this relay remotely. `0` to turn off. |
 | `LATTIX_DOCS_URL` | `/api/docs` | Set to empty to disable the interactive API docs in production. |
+| `LATTIX_RATE_LIMIT_MAX` | `10` | Sign-in/registration attempts allowed per IP per window. Raise it for a household or office behind one NAT address; `0` disables auth rate limiting (test relays only). |
+| `LATTIX_RATE_LIMIT_WINDOW` | `300` | Length of that window, in seconds. |
 
 ---
 
@@ -86,7 +88,7 @@ curl -fsSL https://get.docker.com | sh
 **4. Get the code and configure your domain:**
 ```bash
 git clone https://github.com/aingram702/Lattix.git
-cd Lattix/Lattix/deploy
+cd Lattix/deploy
 echo "LATTIX_DOMAIN=chat.example.com" > .env
 ```
 
@@ -106,7 +108,7 @@ IPs is safe.
 
 **Update later:**
 ```bash
-cd Lattix && git pull && cd Lattix/deploy && docker compose up -d --build
+cd Lattix && git pull && cd deploy && docker compose up -d --build
 ```
 
 **Back up** (the whole app is in one file):

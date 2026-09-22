@@ -12,7 +12,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)   # project root (…/Lattix)
 cd "$ROOT"
 
 APP=${1:-dist/Lattix.app}
-VERSION=${LATTIX_VERSION:-1.1.0}
+VERSION=${LATTIX_VERSION:-2.1.0}
 ARCH=$(uname -m)
 OUTDIR=installer/macos/Output
 OUT="$OUTDIR/Lattix-$VERSION-$ARCH.dmg"

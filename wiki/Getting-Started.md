@@ -31,7 +31,11 @@ python run.py                      # opens http://localhost:8000
 Useful flags:
 
 ```bash
-python run.py --host 0.0.0.0 --port 9000   # expose on your LAN
+python run.py --port 9000                  # a different port
+
+# To use it from another machine, forward the port and keep using localhost —
+# `--host 0.0.0.0` alone serves a page whose crypto the browser has switched off:
+#   ssh -N -L 8000:127.0.0.1:8000 user@your-server
 python run.py --reload                     # dev auto-reload
 python run.py --no-browser                 # don't auto-open a browser
 ```

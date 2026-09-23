@@ -2368,8 +2368,70 @@ async function deleteAppData() {
 }
 
 // ---------------------------------------------------------------------------
+// Secure-context guard
+//
+// Every key Lattix creates comes from the Web Crypto API, and browsers only
+// expose `crypto.subtle` in a secure context: HTTPS, or http:// on localhost /
+// 127.0.0.1 / [::1]. Served over plain http from any other address — a VPS by
+// IP, a LAN box, a hostname without a certificate — `crypto.subtle` is simply
+// `undefined`. The sign-in form still renders, so the app looks fine until the
+// first click, which used to fail with "Cannot read properties of undefined
+// (reading 'digest')" and no explanation.
+//
+// Say so up front instead, and give the two ways out.
+// ---------------------------------------------------------------------------
+function cryptoUnavailable() {
+  try {
+    return !window.isSecureContext || !window.crypto || !window.crypto.subtle;
+  } catch (_) {
+    return true;
+  }
+}
+
+function showInsecureContextNotice() {
+  const host = location.hostname || "this address";
+  const port = location.port || (location.protocol === "https:" ? "443" : "80");
+  const tunnel = `ssh -N -L 8000:127.0.0.1:${port} user@${host}`;
+
+  const card = el("div", { class: "auth-form", style: "display:block" },
+    el("h2", { class: "auth-title" }, "This page can't run Lattix's cryptography"),
+    el("p", { class: "fine err" },
+      `Lattix is being served over plain http:// from ${host}, so your browser has switched off the ` +
+      `Web Crypto API. Every key Lattix creates depends on it, so nothing here — creating an account, ` +
+      `unlocking a vault, reading a message — can work until the page is loaded from a secure origin.`),
+    el("p", { class: "fine" }, "Two ways to fix it:"),
+    el("p", { class: "fine" },
+      el("strong", {}, "1. Put the relay behind HTTPS "), "(the real fix). ",
+      "A certificate makes this a secure context and encrypts your login token in transit. ",
+      el("code", {}, "deploy/vps/install-debian.sh"),
+      " sets up Caddy and Let's Encrypt in one command; see DEPLOYMENT.md."),
+    el("p", { class: "fine" },
+      el("strong", {}, "2. Reach it over localhost "), "(fine for a quick test). ",
+      "From your own machine, forward the port over SSH and open ",
+      el("code", {}, "http://localhost:8000"), " — localhost is always a secure context:"),
+    el("pre", { class: "fine", style: "white-space:pre-wrap;word-break:break-all" },
+      el("code", {}, tunnel)),
+    el("p", { class: "fine" },
+      "Serving Lattix over plain http:// on a LAN address or a public IP cannot be made to work — ",
+      "the restriction is the browser's, not Lattix's."));
+
+  const inner = $(".auth-inner");
+  // Keep the brand block, replace the forms and the relay strip.
+  $$(".auth-form", inner).forEach((f) => f.remove());
+  $(".auth-note", inner)?.remove();
+  $("#auth-relay", inner)?.remove();
+  inner.append(card);
+  $("#auth-screen").hidden = false;
+  $("#app-screen").hidden = true;
+}
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 initAppearance();
-wireServerModal();
-showAuth();
+if (cryptoUnavailable()) {
+  showInsecureContextNotice();
+} else {
+  wireServerModal();
+  showAuth();
+}

@@ -8,7 +8,7 @@ files to edit.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PORT` | `8000` | Port to listen on. Honored by the container and `run.py`; most hosting platforms inject it. |
-| `LATTIX_HOST` | `127.0.0.1` | Bind address for `run.py` (use `0.0.0.0` to expose on a network). |
+| `LATTIX_HOST` | `127.0.0.1` | Bind address for `run.py`. `0.0.0.0` makes the port reachable, but a browser reaching it over plain `http://` at a LAN or public address gets no Web Crypto and the app cannot work — put HTTPS in front, or tunnel to `localhost`. |
 | `LATTIX_DB` | `<app>/data/lattix.db` | SQLite database path. **Point this at a persistent volume**, e.g. `/data/lattix.db`. The DB holds accounts, messages, and file blobs. |
 | `LATTIX_MAX_FILE_MB` | `50` | Maximum encrypted file upload size, in MB. |
 | `LATTIX_CLIENT_DIR` | `<app>/client` | Directory of the static client to serve (set automatically by the desktop installers). |

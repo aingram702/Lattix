@@ -732,10 +732,38 @@ def health() -> dict:
 
 # --------------------------------------------------------------------------- #
 # Static client (served last so /api and /ws take precedence)
+#
+# A relay without the bundled client is a legitimate configuration — the
+# desktop apps and the Chrome extension carry their own copy and only need the
+# API. So a missing client directory must not stop the relay from starting;
+# mounting StaticFiles on a directory that isn't there raises at import time,
+# which used to kill the process with a bare "Directory '...' does not exist"
+# that named neither Lattix nor LATTIX_CLIENT_DIR.
 # --------------------------------------------------------------------------- #
+_INDEX_FILE = os.path.join(CLIENT_DIR, "index.html")
+_HAS_CLIENT = os.path.isfile(_INDEX_FILE)
+
+if not _HAS_CLIENT:
+    print(
+        f"[lattix] No web client at {CLIENT_DIR} — serving the API only.\n"
+        f"[lattix] Point LATTIX_CLIENT_DIR at the repository's client/ directory to serve the app.",
+        flush=True,
+    )
+
+
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(os.path.join(CLIENT_DIR, "index.html"))
+def index():
+    if not _HAS_CLIENT:
+        # Plain text, not JSON: whoever sees this opened it in a browser.
+        raise HTTPException(
+            503,
+            "This Lattix relay is running, but its web client is not installed "
+            f"(looked in {CLIENT_DIR}). The API and /ws are available — point a "
+            "desktop app or the Chrome extension at this address, or set "
+            "LATTIX_CLIENT_DIR to the client/ directory and restart.",
+        )
+    return FileResponse(_INDEX_FILE)
 
 
-app.mount("/", StaticFiles(directory=CLIENT_DIR, html=True), name="client")
+if _HAS_CLIENT:
+    app.mount("/", StaticFiles(directory=CLIENT_DIR, html=True), name="client")

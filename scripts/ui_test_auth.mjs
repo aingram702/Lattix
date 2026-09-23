@@ -249,6 +249,38 @@ try {
     await ctx.close();
   }
 
+  // ---------------- insecure context ----------------
+  // Served over plain http:// from anything but localhost, browsers do not
+  // expose crypto.subtle at all. The app used to render its sign-in form and
+  // then die on the first click with "Cannot read properties of undefined
+  // (reading 'digest')". Simulate that here by hiding the API before any
+  // module runs — a real check needs a non-loopback origin, which a test
+  // relay on 127.0.0.1 can't provide.
+  {
+    const ctx = await browser.newContext();
+    const p = await ctx.newPage();
+    await p.addInitScript(() => {
+      Object.defineProperty(window, "isSecureContext", { get: () => false });
+      try { Object.defineProperty(window.crypto, "subtle", { get: () => undefined }); } catch (_) {}
+    });
+    const errors = [];
+    p.on("pageerror", (e) => errors.push(String(e)));
+    await p.goto(BASE);
+    await p.waitForTimeout(1200);
+
+    ok("an insecure context does not show a sign-in form that cannot work",
+       (await p.locator("#create-form").count()) === 0);
+    const text = await p.locator(".auth-inner").innerText();
+    ok("it explains that the browser disabled Web Crypto",
+       /Web Crypto API/i.test(text), text.slice(0, 80));
+    ok("it names HTTPS as the fix", /HTTPS/.test(text));
+    ok("it offers the localhost/SSH-tunnel workaround",
+       /ssh -N -L/.test(text) && /localhost/.test(text));
+    ok("nothing throws on the way", errors.length === 0, errors[0] || "");
+
+    await ctx.close();
+  }
+
   console.log(`\nResult: ${pass} passed, ${fail} failed`);
   process.exitCode = fail ? 1 : 0;
 } finally {

@@ -203,10 +203,25 @@ python run.py                      # opens http://localhost:8000
 Try it end-to-end by opening the app in **two different browsers** (or one normal + one private window), creating two accounts, and chatting. Each browser holds its own identity vault.
 
 ```bash
-python run.py --host 0.0.0.0 --port 9000   # expose on your LAN
 python run.py --reload                     # dev auto-reload
 python run.py --no-browser                 # don't auto-open a browser
+python run.py --port 9000                  # a different port
 ```
+
+> **`--host 0.0.0.0` alone is not enough to share it.** Browsers expose
+> `crypto.subtle` only in a *secure context* — HTTPS, or `http://` on
+> `localhost` / `127.0.0.1`. Reached over plain `http://` at a LAN or public
+> address, the sign-in page loads and then every action fails, because the
+> browser has switched the crypto off. Lattix now says so instead of throwing.
+>
+> To use it from another machine, either serve it over HTTPS (see
+> [Host it](#host-it-reachable-from-anywhere) — `deploy/vps/install-debian.sh`
+> does Caddy + Let's Encrypt in one command), or forward the port and keep
+> using `localhost`:
+>
+> ```bash
+> ssh -N -L 8000:127.0.0.1:8000 user@your-server    # then open http://localhost:8000
+> ```
 
 ### Chrome extension
 
@@ -303,7 +318,7 @@ CI workflows that build each OS installer live under
 
 ### Tests
 
-Lattix ships **twelve suites, 305 assertions** — two that drive the real server
+Lattix ships **twelve suites, 310 assertions** — two that drive the real server
 with the real crypto module, and ten browser suites that drive the real UI in
 headless Chromium.
 

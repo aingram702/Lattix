@@ -124,8 +124,18 @@ def _banner(host: str, port: int) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Lattix server")
-    parser.add_argument("--host", default=os.environ.get("LATTIX_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
+    # LATTIX_BIND / LATTIX_PORT are the names /etc/lattix/lattix.env uses (the
+    # VPS installer's systemd unit), so `set -a; . /etc/lattix/lattix.env;
+    # python run.py` behaves exactly like the service. LATTIX_HOST and PORT
+    # (injected by Render/Railway/etc.) are still honoured.
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("LATTIX_HOST") or os.environ.get("LATTIX_BIND") or "127.0.0.1",
+    )
+    parser.add_argument(
+        "--port", type=int,
+        default=int(os.environ.get("PORT") or os.environ.get("LATTIX_PORT") or "8000"),
+    )
     parser.add_argument("--reload", action="store_true", help="auto-reload on code changes")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
     parser.add_argument(

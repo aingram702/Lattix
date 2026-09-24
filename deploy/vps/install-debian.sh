@@ -140,6 +140,14 @@ create_user_and_dirs() {
 fetch_code() {
   if [[ -n "$SOURCE_DIR" ]]; then
     [[ -f "$SOURCE_DIR/server/main.py" ]] || die "--source $SOURCE_DIR doesn't look like a Lattix checkout"
+    # rsync --delete below mirrors the source exactly. A partial tree — e.g. a
+    # "changed files" bundle unpacked on its own — would wipe client/ and
+    # requirements.txt from the install and leave a relay with no web app.
+    local f
+    for f in requirements.txt client/index.html client/js/app.js client/vendor/lattix-pqc.js \
+             deploy/vps/lattix.service deploy/vps/Caddyfile.template; do
+      [[ -f "$SOURCE_DIR/$f" ]] || die "--source $SOURCE_DIR is missing $f — it looks like a partial copy. Merge it into a full checkout first."
+    done
     log "Copying code from $SOURCE_DIR"
     install -d "$APP_DIR"
     rsync -a --delete --exclude '.git' --exclude 'node_modules' --exclude 'data' \
@@ -155,6 +163,8 @@ fetch_code() {
     git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
   fi
   [[ -f "$APP_DIR/server/main.py" ]] || die "No server/main.py in $APP_DIR — wrong repository or branch?"
+  [[ -f "$APP_DIR/client/index.html" ]] \
+    || warn "No client/index.html in $APP_DIR — the relay will serve the API only and the web page will answer 503."
   chown -R root:root "$APP_DIR"
   chmod -R go-w "$APP_DIR"
 }
@@ -244,9 +254,9 @@ render_template() {  # $1 template  $2 destination  $3 size suffix (Caddy "MB", 
 }
 
 check_dns() {
-  local public_ip resolved
+  local public_ip resolved public_ip6 resolved6
   public_ip=$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)
-  resolved=$(dig +short A "$DOMAIN" @1.1.1.1 2>/dev/null | tail -n1 || true)
+  resolved=$(dig +short A "$DOMAIN" @1.1.1.1 2>/dev/null | grep -E '^[0-9.]+$' | tail -n1 || true)
   if [[ -z "$resolved" ]]; then
     warn "$DOMAIN has no A record yet. HTTPS certificates can't be issued until DNS points at this VPS${public_ip:+ ($public_ip)}."
   elif [[ -n "$public_ip" && "$resolved" != "$public_ip" ]]; then
@@ -254,6 +264,36 @@ check_dns() {
   else
     log "DNS OK: $DOMAIN -> $resolved"
   fi
+
+  # Let's Encrypt (and most browsers) prefer IPv6. An AAAA record that doesn't
+  # reach this VPS — OVHcloud's default DNS zone ships AAAA records pointing at
+  # its web-hosting cluster, and many VPS images don't configure the assigned
+  # IPv6 at all — makes certificate issuance fail and the site "not open" for
+  # IPv6 visitors even though IPv4 is fine.
+  resolved6=$(dig +short AAAA "$DOMAIN" @1.1.1.1 2>/dev/null | grep ':' | tail -n1 || true)
+  if [[ -n "$resolved6" ]]; then
+    public_ip6=$(curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null || true)
+    if [[ -z "$public_ip6" ]]; then
+      warn "$DOMAIN has an AAAA record ($resolved6), but this VPS has no working IPv6. Delete the AAAA record, or configure the VPS's IPv6 — otherwise HTTPS issuance and IPv6 visitors will fail."
+    elif [[ "$resolved6" != "$public_ip6" ]]; then
+      warn "$DOMAIN AAAA -> $resolved6, but this VPS's public IPv6 is $public_ip6. Fix or delete the AAAA record."
+    else
+      log "DNS OK: $DOMAIN -> $resolved6 (IPv6)"
+    fi
+  fi
+}
+
+free_web_ports() {  # $1 = the proxy we're about to install (caddy|nginx)
+  # Anything else already on :80/:443 (apache2 ships on some provider images,
+  # or a leftover web server) stops the proxy binding, and the site never opens.
+  if systemctl is-active --quiet apache2 2>/dev/null; then
+    warn "apache2 is running and holds ports 80/443 — stopping and disabling it."
+    systemctl disable --now apache2 || true
+  fi
+  local holders
+  holders=$(ss -H -ltnp '( sport = :80 or sport = :443 )' 2>/dev/null \
+            | grep -o 'users:(("[^"]*"' | cut -d'"' -f2 | sort -u | grep -vx "$1" | grep -vx 'nginx\|caddy' || true)
+  [[ -z "$holders" ]] || warn "Ports 80/443 are also in use by: $holders — the reverse proxy may fail to start. Stop that service and re-run."
 }
 
 install_caddy() {
@@ -374,6 +414,7 @@ verify_public() {
   done
   warn "https://$DOMAIN isn't answering yet. Usually DNS or the certificate is still pending; check:"
   warn "  journalctl -u $PROXY -n 50 --no-pager"
+  warn "or run the full diagnosis:  sudo bash $APP_DIR/deploy/vps/lattix-doctor.sh"
   return 0
 }
 
@@ -398,9 +439,12 @@ install_python_env
 write_env_file
 install_service
 check_dns
+# Saved before the proxy step, so `--update` still knows the domain/email if
+# certificate issuance fails the first time (e.g. DNS not propagated yet).
+save_state
+free_web_ports "$PROXY"
 if [[ "$PROXY" == "caddy" ]]; then install_caddy; else install_nginx; fi
 configure_firewall
-save_state
 verify_public
 
 cat <<EOF

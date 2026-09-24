@@ -35,6 +35,12 @@ MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 MAX_AVATAR_CHARS = 400 * 1024
 # Bound the disappearing-message timer (max 4 weeks).
 MAX_TTL_SECONDS = 60 * 60 * 24 * 28
+# File-message metadata is stored in the clear next to the envelope. Bound it:
+# file IDs are the relay's own uuid4 hex, and a filename/MIME type never needs
+# more than a few hundred characters.
+FILE_ID_RE = r"^[0-9a-f]{32}$"
+MAX_FILENAME_CHARS = 255
+MAX_MIME_CHARS = 255
 
 
 def _check_payload_size(payload: dict[str, Any]) -> dict[str, Any]:
@@ -143,10 +149,10 @@ class SendMessageRequest(BaseModel):
 
 class SendFileMessageRequest(BaseModel):
     recipient: str = Field(..., pattern=USERNAME_RE)
-    file_id: str
-    filename: str
-    mime: str
-    size: int
+    file_id: str = Field(..., pattern=FILE_ID_RE)
+    filename: str = Field(..., max_length=MAX_FILENAME_CHARS)
+    mime: str = Field(..., max_length=MAX_MIME_CHARS)
+    size: int = Field(..., ge=0)
     payload: dict[str, Any]  # opaque encrypted envelope (includes wrapped keys)
     ttl: Optional[int] = None
 
@@ -213,10 +219,10 @@ class GroupMessageRequest(BaseModel):
 
 
 class GroupFileMessageRequest(BaseModel):
-    file_id: str
-    filename: str
-    mime: str
-    size: int
+    file_id: str = Field(..., pattern=FILE_ID_RE)
+    filename: str = Field(..., max_length=MAX_FILENAME_CHARS)
+    mime: str = Field(..., max_length=MAX_MIME_CHARS)
+    size: int = Field(..., ge=0)
     payload: dict[str, Any]
     ttl: Optional[int] = None
 

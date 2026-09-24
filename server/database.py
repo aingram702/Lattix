@@ -516,6 +516,21 @@ def user_can_access_file(username: str, file_id: str) -> bool:
         return row is not None
 
 
+def file_owned_by(file_id: str, username: str) -> bool:
+    """True if `username` uploaded this blob. Cheap (no ciphertext loaded).
+
+    The file-message endpoints must check this: user_can_access_file() grants
+    access to the sender of any message that references a file, so letting a
+    user reference a blob they did not upload would let them claim it and
+    download it — turning a leaked file_id back into a bearer capability."""
+    with _lock:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT 1 FROM files WHERE id = ? AND owner = ?", (file_id, username)
+        ).fetchone()
+        return row is not None
+
+
 def get_file(file_id: str) -> Optional[dict]:
     with _lock:
         conn = _connect()

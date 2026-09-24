@@ -1,6 +1,6 @@
 {
   "name": "lattix",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
   "type": "module",
   "description": "Test harness for the Lattix client. The app itself ships no npm dependencies — client/ is dependency-free and client/vendor/lattix-pqc.js is a checked-in offline build (see scripts/build_vendor.sh).",

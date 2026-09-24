@@ -39,7 +39,7 @@ from fastapi import (
     FastAPI, HTTPException, Depends, Header, Request, UploadFile, File, Form,
     WebSocket, WebSocketDisconnect,
 )
-from fastapi.responses import Response, FileResponse
+from fastapi.responses import Response, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -381,6 +381,14 @@ def delete_account(me: str = Depends(require_user)) -> dict:
 # --------------------------------------------------------------------------- #
 # Messaging (1:1)
 # --------------------------------------------------------------------------- #
+def _require_file_owner(file_id: str, me: str) -> None:
+    """A file message may only point at a blob its sender uploaded. Without
+    this, anyone who learned a file_id could post a file message referencing
+    it and then pass user_can_access_file() as that message's sender."""
+    if not db.file_owned_by(file_id, me):
+        raise HTTPException(404, "File not found")
+
+
 @app.post("/api/messages")
 async def send_message(req: SendMessageRequest, me: str = Depends(require_user)) -> dict:
     if not db.user_exists(req.recipient):
@@ -396,9 +404,12 @@ async def send_file_message(
 ) -> dict:
     if not db.user_exists(req.recipient):
         raise HTTPException(404, "Recipient not found")
+    _require_file_owner(req.file_id, me)
     # Ensure the metadata the client displays is stored alongside the envelope.
+    # file_id is forced, not defaulted: the client downloads by payload.file_id,
+    # and it must name the blob whose ownership was just checked.
     payload = dict(req.payload)
-    payload.setdefault("file_id", req.file_id)
+    payload["file_id"] = req.file_id
     payload.setdefault("filename", req.filename)
     payload.setdefault("mime", req.mime)
     payload.setdefault("size", req.size)
@@ -508,8 +519,9 @@ async def send_group_file(
     group_id: int, req: GroupFileMessageRequest, me: str = Depends(require_user)
 ) -> dict:
     group = _require_group_member(group_id, me)
+    _require_file_owner(req.file_id, me)
     payload = dict(req.payload)
-    payload.setdefault("file_id", req.file_id)
+    payload["file_id"] = req.file_id
     payload.setdefault("filename", req.filename)
     payload.setdefault("mime", req.mime)
     payload.setdefault("size", req.size)
@@ -755,9 +767,10 @@ if not _HAS_CLIENT:
 def index():
     if not _HAS_CLIENT:
         # Plain text, not JSON: whoever sees this opened it in a browser.
-        raise HTTPException(
-            503,
-            "This Lattix relay is running, but its web client is not installed "
+        # (HTTPException would have rendered it as {"detail": ...}.)
+        return PlainTextResponse(
+            status_code=503,
+            content="This Lattix relay is running, but its web client is not installed "
             f"(looked in {CLIENT_DIR}). The API and /ws are available — point a "
             "desktop app or the Chrome extension at this address, or set "
             "LATTIX_CLIENT_DIR to the client/ directory and restart.",

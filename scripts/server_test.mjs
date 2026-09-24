@@ -121,6 +121,27 @@ const mallory = await makeUser(name("mallory"));
 
   const own = await call("GET", `/api/files/${up.body.file_id}`, { token: alice.token });
   ok("the uploader can fetch their own blob", own.status === 200, `got ${own.status}`);
+
+  // A leaked file_id must not become a capability: posting a file message that
+  // references someone else's blob used to make the poster its "sender", which
+  // user_can_access_file() then honoured.
+  const meta = { file_id: up.body.file_id, filename: "x", mime: "application/octet-stream", size: 64, payload: {} };
+  const claim = await call("POST", "/api/messages/file",
+    { token: mallory.token, body: { recipient: bob.username, ...meta } });
+  ok("a file message can't reference a blob the sender didn't upload",
+     claim.status === 404, `got ${claim.status}`);
+  const after = await call("GET", `/api/files/${up.body.file_id}`, { token: mallory.token });
+  ok("…so the blob stays out of reach", after.status === 404, `got ${after.status}`);
+
+  const legit = await call("POST", "/api/messages/file",
+    { token: alice.token, body: { recipient: bob.username, ...meta } });
+  ok("the uploader can still send it", legit.status === 200, `got ${legit.status}`);
+  const recv = await call("GET", `/api/files/${up.body.file_id}`, { token: bob.token });
+  ok("and the recipient can fetch it", recv.status === 200, `got ${recv.status}`);
+
+  const huge = await call("POST", "/api/messages/file",
+    { token: alice.token, body: { recipient: bob.username, ...meta, filename: "f".repeat(5000) } });
+  ok("oversized file metadata is refused", huge.status === 422, `got ${huge.status}`);
 }
 
 // --------------------------------------------------------------------------

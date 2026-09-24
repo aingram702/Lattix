@@ -120,8 +120,14 @@ sudo -u lattix sqlite3 /var/lib/lattix/lattix.db ".backup '/var/lib/lattix/backu
 
 ## Troubleshooting
 
+**Start here:** `sudo bash /opt/lattix/app/deploy/vps/lattix-doctor.sh` — a read-only check of
+DNS (A *and* AAAA), firewall, ports 80/443, the certificate, the proxy, the relay and `/ws`, which
+prints the fix for the first thing that's broken.
+
 | Symptom | Fix |
 |---------|-----|
+| **Site doesn't open at all** | Run the doctor. Most common on OVHcloud: an **AAAA record** (OVH's default DNS zone adds them) pointing somewhere other than this VPS, which breaks certificate issuance and IPv6 visitors; or the OVHcloud Edge Network Firewall blocking 80/443. |
+| **Page opens at `http://<ip>:8000` but says it can't run cryptography** | Expected: browsers disable Web Crypto on plain http:// except localhost. Use `https://<your domain>` (this installer), or an SSH tunnel to `localhost`. |
 | **Test connection:** *Couldn't reach …* | DNS not pointing at the VPS yet, port 443 blocked (ufw or OVHcloud Network Firewall), or the certificate hasn't been issued — `journalctl -u caddy -n 50`. |
 | **Test connection:** *HTTPS works, but WebSocket connections aren't getting through* | A proxy in the path isn't forwarding `Upgrade`/`Connection`. The shipped configs do; check any extra layer (Cloudflare proxy → enable WebSockets). |
 | **Test connection:** *…answered, but not like a Lattix relay* | The proxy points at the wrong upstream; check `127.0.0.1:8000` and `systemctl status lattix`. |

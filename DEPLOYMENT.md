@@ -246,6 +246,7 @@ the server.
 
 | Symptom | Cause / fix |
 |---------|-------------|
+| VPS: site doesn't open | Run `sudo bash /opt/lattix/app/deploy/vps/lattix-doctor.sh`. Check DNS **A and AAAA** records, the provider's edge firewall (OVHcloud Network Firewall) and ports 80/443. Browse to `https://<domain>`, never `http://<ip>:8000`. |
 | "Cannot generate keys" / crypto errors | The page isn't a secure context. You must use `https://` (or `localhost`). |
 | Real-time messages don't arrive, but appear after refresh | WebSocket isn't reaching the app. Ensure the proxy forwards `/ws` (Caddy does automatically) and that you're on `https://` so the client uses `wss://`. |
 | Everyone shares one rate-limit bucket / gets 429s together | Proxy client IP isn't being forwarded. Set `LATTIX_FORWARDED_ALLOW_IPS=*` (behind a trusted proxy only). |

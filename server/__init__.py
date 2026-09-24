@@ -4,4 +4,4 @@
 reported by /api/health and shown by the client's "Test connection" check.
 """
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"

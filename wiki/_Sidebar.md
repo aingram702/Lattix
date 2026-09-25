@@ -23,6 +23,6 @@
 - [Development & Contributing](Development-and-Contributing)
 
 ---
-Lattix **2.1.0**
+Lattix **2.2.0**
 
 [GitHub repo »](https://github.com/aingram702/Lattix)

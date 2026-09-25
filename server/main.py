@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import secrets
+import sqlite3
 import time
 import uuid
 from collections import defaultdict, deque
@@ -98,7 +99,14 @@ async def lifespan(_app: FastAPI):
             await sweeper
 
 
-app = FastAPI(title="Lattix", version=__version__, docs_url=_DOCS_URL, lifespan=lifespan)
+# One switch for all of it: FastAPI also serves /redoc and /openapi.json by
+# default, so hiding only /api/docs used to leave the schema public anyway.
+# The schema lives under /api/ so it gets the API's no-store cache header.
+app = FastAPI(
+    title="Lattix", version=__version__, lifespan=lifespan,
+    docs_url=_DOCS_URL, redoc_url=None,
+    openapi_url="/api/openapi.json" if _DOCS_URL else None,
+)
 
 # --------------------------------------------------------------------------- #
 # CORS — letting remote clients reach this relay
@@ -292,15 +300,20 @@ def register(req: RegisterRequest, request: Request) -> TokenResponse:
     if db.user_exists(req.username):
         raise HTTPException(409, "Username already taken")
     salt = secrets.token_hex(16)
-    db.create_user(
-        username=req.username,
-        kem_public_key=req.kem_public_key,
-        dsa_public_key=req.dsa_public_key,
-        fingerprint=req.fingerprint,
-        auth_salt=salt,
-        auth_hash=_hash_secret(req.auth_secret, salt),
-        avatar=req.avatar,
-    )
+    try:
+        db.create_user(
+            username=req.username,
+            kem_public_key=req.kem_public_key,
+            dsa_public_key=req.dsa_public_key,
+            fingerprint=req.fingerprint,
+            auth_salt=salt,
+            auth_hash=_hash_secret(req.auth_secret, salt),
+            avatar=req.avatar,
+        )
+    except sqlite3.IntegrityError:
+        # Two registrations for the same name raced past user_exists().
+        # The loser gets the same 409 as a sequential duplicate, not a 500.
+        raise HTTPException(409, "Username already taken")
     return _issue_token(req.username)
 
 
@@ -369,12 +382,25 @@ def set_avatar(req: AvatarRequest, me: str = Depends(require_user)) -> dict:
 
 
 @app.delete("/api/me")
-def delete_account(me: str = Depends(require_user)) -> dict:
+async def delete_account(me: str = Depends(require_user)) -> dict:
     """Irreversibly delete the account and everything it owns."""
-    db.delete_user(me)
+    contacts = db.list_contacts(me)  # before the envelopes that define them are gone
+    groups = await asyncio.to_thread(db.delete_user, me)
     for tok, rec in list(_tokens.items()):
         if rec["username"] == me:
             _tokens.pop(tok, None)
+    # Live sockets were keyed only by username and outlived the account: they
+    # kept receiving presence, and would have received envelopes addressed to
+    # anyone who later registered the same name. Close them the way an
+    # expired session is closed.
+    await manager.close_user(me, code=4401)
+    for peer in contacts:
+        await manager._send_to(peer, {"type": "presence", "username": me, "online": False})
+    for gid in groups:
+        await manager.notify_group_members(
+            db.group_member_names(gid),
+            {"type": "group", "action": "members", "group_id": gid},
+        )
     return {"ok": True}
 
 
@@ -604,6 +630,12 @@ class ConnectionManager:
     def is_online(self, username: str) -> bool:
         return bool(self.active.get(username))
 
+    async def close_user(self, username: str, code: int = 1000) -> None:
+        """Close every socket a user has open."""
+        for ws in list(self.active.pop(username, set())):
+            with contextlib.suppress(Exception):
+                await ws.close(code=code)
+
     async def _send_to(self, username: str, msg: dict) -> None:
         for ws in list(self.active.get(username, set())):
             try:
@@ -706,12 +738,16 @@ async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
         await manager.presence(username, True)
         await manager.send_presence_snapshot(username, ws)
         while True:
-            text = await ws.receive_text()
+            frame = await ws.receive()
+            if frame["type"] == "websocket.disconnect":
+                break
             # Application-level heartbeat. Reverse proxies drop idle upgraded
             # connections (nginx: proxy_read_timeout, 60s by default), and a
             # TCP connection can die silently on a flaky network. The client
             # pings; answering lets it notice a dead socket and reconnect.
-            if text == "ping":
+            # Binary frames are ignored (receive_text() used to raise KeyError
+            # on one, logging a traceback for every stray frame).
+            if frame.get("text") == "ping":
                 await ws.send_json({"type": "pong"})
     except (WebSocketDisconnect, RuntimeError):
         pass
@@ -737,9 +773,14 @@ def health() -> dict:
         "version": app.version,
         "max_file_bytes": MAX_FILE_BYTES,
         "time": time.time(),
-        "features": ["ws-auth-message", "ws-pong", "cors-local"] if _cors_allow_local
-        else ["ws-auth-message", "ws-pong"],
+        "history_page_size": db.HISTORY_PAGE_SIZE,
+        "features": _FEATURES,
     }
+
+
+# What this relay supports. "history-paging" means history endpoints return at
+# most history_page_size envelopes per call and clients should page with since=.
+_FEATURES = ["ws-auth-message", "ws-pong", "history-paging"] + (["cors-local"] if _cors_allow_local else [])
 
 
 # --------------------------------------------------------------------------- #

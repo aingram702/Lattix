@@ -38,7 +38,9 @@ file, "persistence" just means **one durable volume** mounted at `/data`.
 | `LATTIX_KEEPALIVE` | `75` | Idle keep-alive seconds. Keep it above your proxy's upstream keep-alive (60 s in the shipped configs) to avoid sporadic 502s. |
 | `LATTIX_CORS_ORIGINS` | *(none)* | Extra comma-separated origins allowed cross-origin (or `*`). Only needed if you host the web client on another origin. |
 | `LATTIX_CORS_ALLOW_LOCAL` | `1` | Lets the desktop apps (`http://localhost:*`) and the Chrome extension use this relay remotely. `0` to turn off. |
-| `LATTIX_DOCS_URL` | `/api/docs` | Set to empty to disable the interactive API docs in production. |
+| `LATTIX_DOCS_URL` | `/api/docs` | Set to empty to disable the interactive API docs and the `/api/openapi.json` schema in production. |
+| `LATTIX_CLIENT_DIR` | `<app>/client` | Web client to serve. Missing → the relay runs API-only (for the desktop apps and extension) and `/` answers 503. |
+| `LATTIX_BIND` / `LATTIX_HOST`, `LATTIX_PORT` / `PORT` | `127.0.0.1`, `8000` | Bind address and port used by `run.py` (the VPS env file uses the `LATTIX_BIND`/`LATTIX_PORT` names; PaaS platforms inject `PORT`). |
 | `LATTIX_RATE_LIMIT_MAX` | `10` | Sign-in/registration attempts allowed per IP per window. Raise it for a household or office behind one NAT address; `0` disables auth rate limiting (test relays only). |
 | `LATTIX_RATE_LIMIT_WINDOW` | `300` | Length of that window, in seconds. |
 
@@ -111,17 +113,25 @@ IPs is safe.
 cd Lattix && git pull && cd deploy && docker compose up -d --build
 ```
 
-**Back up** (the whole app is in one file):
+**Back up** (the whole app is in one SQLite file). The relay runs SQLite in WAL
+mode, so recent writes can sit in `lattix.db-wal`; a plain `cp` of a live
+database can miss them or catch it mid-write. Use SQLite's online backup, which
+takes a consistent snapshot while the relay keeps running:
 ```bash
-docker run --rm -v deploy_lattix-data:/data -v "$PWD":/backup alpine \
-  cp /data/lattix.db /backup/lattix-backup-$(date +%F).db
+cd Lattix/deploy
+docker compose exec -T lattix python -c \
+  "import sqlite3; d=sqlite3.connect('/data/backup.db'); sqlite3.connect('/data/lattix.db').backup(d); d.close()"
+docker compose cp lattix:/data/backup.db ./lattix-backup-$(date +%F).db
+docker compose exec -T lattix rm /data/backup.db
 ```
+Restore by stopping the stack, copying the file back over `/data/lattix.db`
+(and deleting any `lattix.db-wal` / `lattix.db-shm` beside it), and starting it.
 
 ---
 
 ### Using the prebuilt image (optional)
 
-The [`docker-image`](../.github/workflows/docker-image.yml) workflow publishes a
+The [`docker-image`](.github/workflows/docker-image.yml) workflow publishes a
 ready-to-run image to `ghcr.io/<owner>/lattix`. To use it instead of building
 from source, replace the `lattix` service's `build:` block in
 `docker-compose.yml` with `image: ghcr.io/<owner>/lattix:latest`.
@@ -134,9 +144,10 @@ Uses [`deploy/render.yaml`](deploy/render.yaml). Render terminates TLS, gives yo
 an `https://…onrender.com` domain (or a custom domain), supports WebSockets, and
 injects `$PORT`.
 
-1. Copy `deploy/render.yaml` to your **repository root** and push it (Render
-   reads the blueprint from the root; this repo keeps the app under `Lattix/`,
-   which the blueprint's `rootDir` handles).
+1. Copy `deploy/render.yaml` to your **repository root** as `render.yaml` and
+   push it. Render reads the blueprint from the root, and its `dockerfilePath`
+   and `dockerContext` are relative to it (the app, `Dockerfile` included, is
+   at the root of this repo).
 2. In Render: **New + → Blueprint**, select your repo, apply.
 3. A persistent disk (mounted at `/data`, matching `LATTIX_DB`) requires a
    **paid instance type** — the free tier has an ephemeral filesystem and will
@@ -153,7 +164,7 @@ Uses [`deploy/fly.toml`](deploy/fly.toml). Fly gives HTTPS + WebSockets and a
 `.fly.dev` domain.
 
 ```bash
-# from the Lattix/ app directory
+# from the repository root (where the Dockerfile is)
 cp deploy/fly.toml ./fly.toml           # then edit `app` to a unique name
 fly launch --no-deploy                  # or: fly apps create lattix-yourname
 fly volumes create lattix_data --size 1 --region iad   # persistent /data
@@ -225,6 +236,26 @@ the server.
 
 ---
 
+## Upgrading to 2.2
+
+2.2 is a drop-in upgrade for the relay: the database migrates itself on start,
+and 2.1 clients keep working. Two things to know:
+
+- **Upgrade the desktop apps too.** The web client comes from the relay, so it
+  updates when the relay does. A desktop app or extension still on 2.1 will show
+  files sent from 2.2 clients as *unverified* (the file format changed so names
+  can be encrypted).
+- **Registrations are stricter.** The relay now refuses public keys of the wrong
+  size and fingerprints that don't match the keys. Real clients always send
+  matching values; this only affects hand-rolled API scripts.
+
+Every install method updates the same way as a normal deploy
+(`git pull` + restart, `docker compose up -d --build`, or
+`sudo bash deploy/vps/install-debian.sh --update`). Check the version with
+`curl https://<your-domain>/api/health`.
+
+---
+
 ## Security checklist
 
 - ✅ **HTTPS only** — never expose the app over plain HTTP (crypto won't run, and
@@ -234,7 +265,9 @@ the server.
   trusted proxy is the sole path to the app — otherwise a client could spoof
   `X-Forwarded-For` to dodge rate limiting.
 - ✅ **Persist `/data`** and back it up — it holds every account and message.
-- ✅ Optionally set `LATTIX_DOCS_URL=` to hide the API docs.
+- ✅ Set `LATTIX_DOCS_URL=` (empty) to hide the interactive API docs **and** the
+  OpenAPI schema (`/api/docs`, `/api/openapi.json`). Since 2.2 one setting covers
+  both; FastAPI's `/redoc` is never served.
 - ℹ️ The server is a zero-knowledge relay: it only ever stores ciphertext and
   public keys, so a server compromise does not reveal message contents. Users
   should still verify contact **safety codes** to defend against a malicious

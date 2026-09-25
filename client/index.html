@@ -178,6 +178,16 @@
           </div>
         </header>
 
+        <!-- Shown only when a verified contact's safety code no longer matches,
+             or a share link's code disagrees with the relay's keys. -->
+        <div id="key-banner" class="key-banner" role="alert" hidden>
+          <div id="key-banner-text" class="key-banner-text"></div>
+          <div class="key-banner-actions">
+            <button id="key-banner-review" class="btn">Review</button>
+            <button id="key-banner-accept" class="btn danger">Accept new code</button>
+          </div>
+        </div>
+
         <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation"></div>
         <button id="jump-latest" class="jump-pill" hidden>↓ New messages</button>
 
@@ -213,6 +223,10 @@
       </div>
       <div id="fp-value" class="fp-value"></div>
       <p id="fp-hint" class="fine"></p>
+      <p id="fp-status" class="fine fp-status" role="status"></p>
+      <div id="fp-actions" class="set-actions end spaced" hidden>
+        <button id="fp-toggle" type="button" class="primary">Mark as verified</button>
+      </div>
     </div>
   </div>
 

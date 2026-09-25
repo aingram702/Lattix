@@ -9,17 +9,24 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
-from typing import Any, Optional
-from pydantic import BaseModel, Field, field_validator
+from typing import Annotated, Any, Optional
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 USERNAME_RE = r"^[a-zA-Z0-9_.-]{3,32}$"
+# A username as it appears inside a list (group rosters). Same rule as above.
+Username = Annotated[str, Field(pattern=USERNAME_RE)]
 # The public directory is writable by anyone who can register, so the key
 # material it accepts is bounded and shape-checked. The real sizes are
 # ML-KEM-768: 1184 bytes (~1580 base64 chars) and ML-DSA-65: 1952 bytes
 # (~2604); the caps below leave room without letting the table be stuffed.
 MAX_KEM_KEY_CHARS = 4096
 MAX_DSA_KEY_CHARS = 8192
+# Exact decoded sizes (FIPS 203 / FIPS 204). Anything else cannot be a key the
+# client will accept, so it is refused at the door rather than stored.
+KEM_PUBLIC_KEY_BYTES = 1184
+DSA_PUBLIC_KEY_BYTES = 1952
 FINGERPRINT_RE = r"^[0-9a-f]{64}$"   # hex SHA-256 of the two public keys
 MAX_AUTH_SECRET_CHARS = 512
 # Group icons are a single emoji; a few code points allow for ZWJ sequences.
@@ -65,6 +72,12 @@ def _check_base64(v: str) -> str:
     return v
 
 
+def fingerprint_of(kem_b64: str, dsa_b64: str) -> str:
+    """SHA-256(kem_public || dsa_public), hex — the same value the client
+    computes in crypto.js fingerprintOf()."""
+    return hashlib.sha256(base64.b64decode(kem_b64) + base64.b64decode(dsa_b64)).hexdigest()
+
+
 def _check_avatar(v: Optional[str]) -> Optional[str]:
     if v is None:
         return None
@@ -97,6 +110,21 @@ class RegisterRequest(BaseModel):
     @classmethod
     def avatar_ok(cls, v: Optional[str]) -> Optional[str]:
         return _check_avatar(v)
+
+    @model_validator(mode="after")
+    def keys_match_fingerprint(self) -> "RegisterRequest":
+        # The directory used to store whatever `fingerprint` arrived, so an
+        # account could publish someone else's safety code next to its own
+        # keys. Clients now recompute the fingerprint themselves (that is the
+        # real defence against a lying relay), but an honest relay should
+        # never publish an inconsistent record in the first place.
+        if len(base64.b64decode(self.kem_public_key)) != KEM_PUBLIC_KEY_BYTES:
+            raise ValueError(f"kem_public_key must be {KEM_PUBLIC_KEY_BYTES} bytes (ML-KEM-768)")
+        if len(base64.b64decode(self.dsa_public_key)) != DSA_PUBLIC_KEY_BYTES:
+            raise ValueError(f"dsa_public_key must be {DSA_PUBLIC_KEY_BYTES} bytes (ML-DSA-65)")
+        if fingerprint_of(self.kem_public_key, self.dsa_public_key) != self.fingerprint:
+            raise ValueError("fingerprint does not match the public keys")
+        return self
 
 
 class LoginRequest(BaseModel):
@@ -177,7 +205,7 @@ class CreateGroupRequest(BaseModel):
     # Every group message is wrapped once per member, so a huge roster is a
     # cost the sender pays on every send. Cap it at something a relay of this
     # shape can serve comfortably.
-    members: list[str] = Field(default_factory=list, max_length=256)
+    members: list[Username] = Field(default_factory=list, max_length=256)
     icon: Optional[str] = Field(default=None, max_length=MAX_GROUP_ICON_CHARS)  # emoji only
 
     @field_validator("members")

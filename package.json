@@ -1,12 +1,15 @@
 {
   "name": "lattix",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
-  "description": "Test harness for the Lattix client. The app itself ships no npm dependencies — client/ is dependency-free and client/vendor/lattix-pqc.js is a checked-in offline build (see scripts/build_vendor.sh).",
+  "description": "Test harness for the Lattix client. The app itself ships no npm dependencies \u2014 client/ is dependency-free and client/vendor/lattix-pqc.js is a checked-in offline build (see scripts/build_vendor.sh).",
   "scripts": {
     "test": "node scripts/integration_test.mjs",
+    "test:regression": "node scripts/regression_test.mjs",
+    "test:db": "python3 scripts/db_test.py",
     "test:ui": "node scripts/ui_test.mjs",
+    "test:trust": "node scripts/ui_test_trust.mjs",
     "test:all": "node scripts/run_all_tests.mjs",
     "build:vendor": "bash scripts/build_vendor.sh"
   },

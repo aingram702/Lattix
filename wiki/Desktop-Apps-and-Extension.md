@@ -68,10 +68,10 @@ desktop-app and extension origins by default; for an older relay set
 ### Linux `.run` install / uninstall
 
 ```bash
-chmod +x Lattix-2.1.0-x86_64.run
-./Lattix-2.1.0-x86_64.run           # per-user, or system-wide if run as root
-./Lattix-2.1.0-x86_64.run --user    # force per-user even as root
-./Lattix-2.1.0-x86_64.run --uninstall
+chmod +x Lattix-2.2.0-x86_64.run
+./Lattix-2.2.0-x86_64.run           # per-user, or system-wide if run as root
+./Lattix-2.2.0-x86_64.run --user    # force per-user even as root
+./Lattix-2.2.0-x86_64.run --uninstall
 ```
 
 ### macOS note

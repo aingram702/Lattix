@@ -29,6 +29,16 @@ read your messages, and it can't forge them.
 
 ---
 
+## New in 2.2
+
+A security release. **Safety codes are computed on your device** and pinned, a
+verified contact's key change shows a red banner and pauses sending, and **QR
+codes / share links verify automatically**. File names are now encrypted and
+file contents signed; vaults use 600,000 PBKDF2 iterations. Relay fixes: group
+owners deleting their account no longer delete the group, history past 500
+messages loads fully, 1.x databases start again. See the
+[Release Notes](Release-Notes).
+
 ## New in 2.0
 
 A usability, accessibility and performance release. **The cryptography and wire
@@ -84,7 +94,7 @@ See [Cryptography](Cryptography) for the full construction.
 
 ## Project status
 
-Lattix is at **2.1.0** and is a solid, correct **reference implementation** — not
+Lattix is at **2.2.0** and is a solid, correct **reference implementation** — not
 a formally audited product. It is a great way to learn how a post-quantum E2E
 messenger fits together, and it is usable for real for small trusted groups. Get a
 professional review before trusting it with lives. See

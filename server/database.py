@@ -20,6 +20,11 @@ _DB_PATH = os.environ.get(
     os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "lattix.db"),
 )
 
+# Maximum envelopes returned by one history request. Clients page with
+# ?since=<last id> until a page comes back shorter than this; /api/health
+# advertises it as history_page_size.
+HISTORY_PAGE_SIZE = 500
+
 # A single connection guarded by a lock keeps things simple and correct for a
 # local, single-process deployment. For high concurrency, swap in a pool.
 _lock = threading.RLock()
@@ -67,7 +72,6 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_env_recipient ON envelopes(recipient, id);
             CREATE INDEX IF NOT EXISTS idx_env_sender    ON envelopes(sender, id);
-            CREATE INDEX IF NOT EXISTS idx_env_file_id   ON envelopes(file_id);
 
             CREATE TABLE IF NOT EXISTS files (
                 id           TEXT PRIMARY KEY,     -- uuid
@@ -110,24 +114,34 @@ def init_db() -> None:
                 FOREIGN KEY (sender)   REFERENCES users(username) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_ge_group ON group_envelopes(group_id, id);
-            CREATE INDEX IF NOT EXISTS idx_ge_file  ON group_envelopes(file_id);
             """
         )
         _migrate(conn)
+        # Indexes on columns that _migrate() may have just added. Creating them
+        # in the script above crashed startup on any database from before those
+        # columns existed ("no such column: file_id").
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_env_file_id ON envelopes(file_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ge_file ON group_envelopes(file_id)")
         conn.commit()
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Add columns introduced after the first schema without dropping data."""
-    env_cols = {r["name"] for r in conn.execute("PRAGMA table_info(envelopes)")}
-    if "file_id" not in env_cols:
-        conn.execute("ALTER TABLE envelopes ADD COLUMN file_id TEXT")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_env_file_id ON envelopes(file_id)")
-    if "expires_at" not in env_cols:
-        conn.execute("ALTER TABLE envelopes ADD COLUMN expires_at REAL")
-    user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
-    if "avatar" not in user_cols:
-        conn.execute("ALTER TABLE users ADD COLUMN avatar TEXT")
+    added = {
+        "envelopes": {"file_id": "TEXT", "expires_at": "REAL"},
+        "users": {"avatar": "TEXT"},
+        "groups": {"icon": "TEXT"},
+        "group_envelopes": {"file_id": "TEXT", "expires_at": "REAL"},
+    }
+    for table, cols in added.items():
+        have = _columns(conn, table)
+        for col, decl in cols.items():
+            if col not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
 # ----------------------------------------------------------------------------
@@ -174,13 +188,45 @@ def set_avatar(username: str, avatar: Optional[str]) -> None:
         conn.commit()
 
 
-def delete_user(username: str) -> None:
-    """Remove a user and everything owned by them. Foreign-key cascades take
-    care of their envelopes, files, group memberships, and owned groups."""
+def delete_user(username: str) -> list[int]:
+    """Remove a user and everything they own.
+
+    Foreign-key cascades remove their envelopes, files and memberships. Groups
+    they OWN are handled first: `groups.owner` also cascades, so deleting an
+    owner's account used to delete the whole group — every other member's
+    history with it. Ownership now passes to the longest-standing remaining
+    member (the same rule as an owner leaving); only a group with nobody else
+    in it is dropped.
+
+    Returns the ids of groups that survived and changed, so the caller can
+    tell their members.
+    """
     with _lock:
         conn = _connect()
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))
-        conn.commit()
+        touched: list[int] = []
+        try:
+            conn.execute("BEGIN")
+            # Every group they're in (owned or not) loses a member.
+            touched = [r["group_id"] for r in conn.execute(
+                "SELECT group_id FROM group_members WHERE username = ?", (username,))]
+            owned = [r["id"] for r in conn.execute(
+                "SELECT id FROM groups WHERE owner = ?", (username,))]
+            for gid in owned:
+                row = conn.execute(
+                    "SELECT username FROM group_members WHERE group_id = ? AND username != ? "
+                    "ORDER BY joined_at ASC, username ASC LIMIT 1", (gid, username)).fetchone()
+                if row:
+                    conn.execute("UPDATE groups SET owner = ? WHERE id = ?", (row["username"], gid))
+                else:
+                    conn.execute("DELETE FROM groups WHERE id = ?", (gid,))
+                    if gid in touched:
+                        touched.remove(gid)
+            conn.execute("DELETE FROM users WHERE username = ?", (username,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return touched
 
 
 def search_users(query: str, limit: int = 25) -> list[dict[str, Any]]:
@@ -226,7 +272,7 @@ def store_envelope(
 
 
 def get_conversation(user_a: str, user_b: str, since_id: int = 0,
-                     limit: int = 500) -> list[dict]:
+                     limit: int = HISTORY_PAGE_SIZE) -> list[dict]:
     """All envelopes exchanged between two users, oldest first."""
     with _lock:
         conn = _connect()
@@ -268,14 +314,36 @@ def list_contacts(username: str) -> list[str]:
         return [r["peer"] for r in rows if r["peer"] != username]
 
 
-def delete_expired() -> None:
-    """Drop disappearing messages whose deadline has passed."""
+def delete_expired() -> int:
+    """Drop disappearing messages whose deadline has passed — and the file
+    blobs they pointed at.
+
+    Blobs used to wait for the orphan sweep, which spares anything younger
+    than its grace period (6 h), so a "30 seconds" file message kept its
+    ciphertext on disk for hours after it vanished from every chat. A blob is
+    removed here only when no surviving envelope still references it.
+    Returns the number of blobs removed.
+    """
     with _lock:
         conn = _connect()
         now = time.time()
+        expiring = [r["file_id"] for r in conn.execute(
+            "SELECT file_id FROM envelopes WHERE expires_at IS NOT NULL AND expires_at <= ? "
+            "AND file_id IS NOT NULL "
+            "UNION SELECT file_id FROM group_envelopes WHERE expires_at IS NOT NULL "
+            "AND expires_at <= ? AND file_id IS NOT NULL", (now, now))]
         conn.execute("DELETE FROM envelopes WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,))
         conn.execute("DELETE FROM group_envelopes WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,))
+        removed = 0
+        for fid in expiring:
+            cur = conn.execute(
+                "DELETE FROM files WHERE id = ? "
+                "AND id NOT IN (SELECT file_id FROM envelopes WHERE file_id IS NOT NULL) "
+                "AND id NOT IN (SELECT file_id FROM group_envelopes WHERE file_id IS NOT NULL)",
+                (fid,))
+            removed += cur.rowcount or 0
         conn.commit()
+        return removed
 
 
 def delete_orphan_files(grace_seconds: float) -> int:
@@ -459,7 +527,8 @@ def store_group_envelope(
         }
 
 
-def get_group_messages(group_id: int, since_id: int = 0, limit: int = 500) -> list[dict]:
+def get_group_messages(group_id: int, since_id: int = 0,
+                       limit: int = HISTORY_PAGE_SIZE) -> list[dict]:
     with _lock:
         conn = _connect()
         rows = conn.execute(

@@ -13,8 +13,23 @@ quantum computer can't decrypt captured traffic or forge messages. See
 No. Everything is encrypted in your browser before it's sent. The server stores
 only ciphertext and public keys. It also can't forge messages, because it holds
 no one's signing key. The one thing a malicious server could *try* is handing you
-the wrong public key for a contact — which **safety-code verification** detects.
-See [Security & Trust Model](Security-and-Trust-Model).
+the wrong public key for a contact. Lattix computes safety codes itself, pins
+each contact's key, and warns you if a verified contact's key changes — verify
+the contacts that matter by scanning their QR code or comparing codes. See
+[Security & Trust Model](Security-and-Trust-Model).
+
+### A red banner says a contact's safety code changed. What do I do?
+
+Ask them — over a call or in person — whether they reinstalled Lattix, moved
+device, or created a new account. If they did, compare the new code (**Review**)
+and mark them verified again, or **Accept new code**. If they didn't, don't send
+anything sensitive: someone, possibly the relay, may be substituting keys.
+Sending to them stays paused until you decide.
+
+### Can the relay see my file names?
+
+Not since 2.2. Names, types and sizes are encrypted along with the file. Files
+sent from 2.1 or earlier had their names stored in plain text.
 
 ### I forgot my password. Can I get my account back?
 
@@ -50,7 +65,9 @@ only sees ciphertext.
 ### Do disappearing messages really get deleted?
 
 They're removed from the UI when the timer elapses and purged from the server by
-a background sweep, so they don't come back on reload. As with any messaging app,
+a background sweep, so they don't come back on reload. File messages take their
+encrypted file with them. The timer is enforced by the relay, so a hostile relay
+could keep messages. As with any messaging app,
 a determined recipient could still screenshot or copy content before it expires.
 
 ### Why no push notifications to my phone number?
@@ -81,8 +98,8 @@ violations. Shortcuts are listed in **Settings → Keyboard**. See
 They're only ever applied to a message whose **ML-DSA signature verified** — a
 forged or tampered envelope stays an inert file card you have to open
 deliberately. The image is decrypted locally like any other file; nothing is
-fetched from a third party. Previews are **off by default**; enable them under
-**Settings → Media**.
+fetched from a third party. SVG is never previewed. Previews are **on by
+default**; turn them off under **Settings → Media**.
 
 ### Does it stay usable with thousands of messages?
 
@@ -107,7 +124,8 @@ trusting it with lives. See [Security & Trust Model](Security-and-Trust-Model).
 
 Export your **vault** (Settings → Export vault) on the old device and **Import a
 vault** on the new one, or restore an **encrypted backup**. Your username and
-keys carry over.
+keys carry over. Key pins (which contacts you verified) are per browser, so
+re-verify important contacts on the new device.
 
 ### Where can I report a bug or a security issue?
 

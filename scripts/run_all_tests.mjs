@@ -25,8 +25,10 @@ const BASE = process.env.LATTIX_BASE || `http://127.0.0.1:${PORT}`;
 const PYTHON = process.env.PYTHON || "python3";
 
 const SUITES = [
+  "db_test.py",
   "integration_test.mjs",
   "server_test.mjs",
+  "regression_test.mjs",
   "ui_test.mjs",
   "ui_test_auth.mjs",
   "ui_test_sidebar.mjs",
@@ -37,6 +39,7 @@ const SUITES = [
   "ui_test_a11y.mjs",
   "ui_test_perf.mjs",
   "ui_test_relay.mjs",
+  "ui_test_trust.mjs",
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -55,7 +58,9 @@ async function waitForRelay(timeoutMs = 30_000) {
 
 function runSuite(name) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [join(HERE, name)], {
+    // .py suites (the database layer) run under the same Python as the relay.
+    const cmd = name.endsWith(".py") ? PYTHON : process.execPath;
+    const child = spawn(cmd, [join(HERE, name)], {
       cwd: ROOT,
       stdio: "inherit",
       env: { ...process.env, LATTIX_BASE: BASE },

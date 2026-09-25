@@ -32,7 +32,13 @@ const state = {
   filter: "",            // sidebar search text
   connected: false,
   pendingAdd: null,      // deep-link: username to open after boot
+  pins: {},              // username -> { fp, verified, at } — pinned safety codes (per relay)
+  keyAlerts: new Map(),  // username -> { oldFp, newFp, reason } — unresolved key problems
 };
+
+// Size of one history page. The relay advertises it (history_page_size) and
+// 500 matches every relay that doesn't.
+let HISTORY_PAGE = 500;
 
 // ---------------------------------------------------------------------------
 // Tiny DOM helpers
@@ -491,7 +497,7 @@ async function onCreate(e) {
   const password = $("#create-password").value;
   const password2 = $("#create-password2").value;
 
-  // Validate before generating keys: ML-KEM + ML-DSA keygen plus a 250k-round
+  // Validate before generating keys: ML-KEM + ML-DSA keygen plus a 600k-round
   // PBKDF2 seal is seconds of work, and there is no point spending it on a
   // password the user has already mistyped.
   if (password.length < 8) return toast("Password must be at least 8 characters", "error");
@@ -566,11 +572,23 @@ async function onUnlock(e) {
     const identity = await C.openVault(vault, password);
     if (!(await loginOrEnroll(identity))) return;
     await bootApp(identity);
+    upgradeVault(vault, identity, password);
   } catch (err) {
     toast(err.message || "Unlock failed", "error");
   } finally {
     btn.disabled = false; btn.classList.remove("busy");
   }
+}
+
+// Vaults sealed by older versions used a lower PBKDF2 work factor. Having just
+// proven the password, re-seal at the current one. Best effort, in the
+// background; the old vault stays in place if anything fails.
+async function upgradeVault(vault, identity, password) {
+  if (!C.vaultNeedsUpgrade(vault)) return;
+  try {
+    const { avatar, ...stored } = identity;  // avatar lives on the relay, not in the vault
+    storeVault(await C.sealVault(stored, password));
+  } catch (_) {}
 }
 
 // Log in with an unlocked identity. The vault has already decrypted, so the
@@ -625,6 +643,7 @@ async function onImport(e) {
     if (!(await loginOrEnroll(identity))) return;
     storeVault(vault);
     await bootApp(identity);
+    upgradeVault(vault, identity, password);
     toast("Vault imported to this device", "success");
   } catch (err) {
     toast(err.message || "Import failed", "error");
@@ -669,14 +688,19 @@ async function bootApp(identity) {
   // socket (the socket's auth mode depends on them); harmless if an older
   // relay omits either.
   await api.health()
-    .then((h) => { if (h && h.max_file_bytes > 0) MAX_UPLOAD_BYTES = h.max_file_bytes; })
+    .then((h) => {
+      if (h && h.max_file_bytes > 0) MAX_UPLOAD_BYTES = h.max_file_bytes;
+      if (h && h.history_page_size > 0) HISTORY_PAGE = h.history_page_size;
+    })
     .catch(() => {});
+  state.pins = loadPins();
   api.connectSocket();
 
   const me = await api.me();
   identity.avatar = me.avatar || identity.avatar || null;
   state.peers[identity.username].avatar = identity.avatar;
   renderSelf();
+  checkOwnPublishedKeys();
 
   for (const c of me.contacts) ensureDmConvo(c);
   for (const g of (me.groups || [])) ensureGroupConvo(g);
@@ -760,16 +784,12 @@ function resyncAfterReconnect() {
       for (const c of me.contacts) ensureDmConvo(c);
       for (const g of (me.groups || [])) ensureGroupConvo(g);
       await Promise.allSettled([
-        ...me.contacts.map(async (c) => {
-          const convo = ensureDmConvo(c);
-          const envs = await api.conversation(c, convo.maxId);
-          for (const env of envs) await ingestDm(env, { live: true });
-        }),
-        ...(me.groups || []).map(async (g) => {
-          const convo = ensureGroupConvo(g);
-          const envs = await api.groupMessages(g.id, convo.maxId);
-          for (const env of envs) await ingestGroup(env, { live: true });
-        }),
+        ...me.contacts.map((c) => pullHistory(
+          (since) => api.conversation(c, since), ensureDmConvo(c).maxId,
+          (env) => ingestDm(env, { live: true }))),
+        ...(me.groups || []).map((g) => pullHistory(
+          (since) => api.groupMessages(g.id, since), ensureGroupConvo(g).maxId,
+          (env) => ingestGroup(env, { live: true }))),
       ]);
       renderContacts();
     } catch (_) {
@@ -974,20 +994,160 @@ function ensureGroupConvo(g) {
   return state.convos[cid];
 }
 
-async function getPeerKeys(username) {
-  if (state.peers[username]) return state.peers[username];
-  const u = await api.getUser(username);
-  state.peers[username] = u;
-  return u;
+// Public keys for `username`, from cache unless `refresh`. Every key record
+// from the relay passes through adoptPeerKeys(), which computes the
+// fingerprint itself and checks it against the pinned one.
+async function getPeerKeys(username, { refresh = false } = {}) {
+  const cached = state.peers[username];
+  if (!refresh && cached && cached.kem_public_key) return cached;
+  const u = await adoptPeerKeys(username, await api.getUser(username));
+  state.peers[username] = { ...state.peers[username], ...u };
+  return state.peers[username];
 }
 
 async function ensureGroupLoaded(id) {
-  const cid = groupCid(id);
   const detail = await api.getGroup(id);
   const convo = ensureGroupConvo(detail);
-  convo.meta = detail;
-  for (const m of detail.members) state.peers[m.username] = { ...state.peers[m.username], ...m };
+  for (const m of detail.members) {
+    const adopted = await adoptPeerKeys(m.username, m);
+    state.peers[m.username] = { ...state.peers[m.username], ...adopted };
+  }
+  convo.meta = { ...detail, members: detail.members.map((m) => state.peers[m.username] ? { ...m, ...state.peers[m.username] } : m) };
   return convo;
+}
+
+// ---------------------------------------------------------------------------
+// Key trust: fingerprints, pinning, verification
+//
+// The relay is untrusted, so nothing it says about a key is taken on faith:
+//
+//   * The fingerprint shown and pinned is always computed HERE, as
+//     SHA-256(kem_public || dsa_public) of the keys actually used. The relay's
+//     own `fingerprint` field is ignored — earlier builds displayed it, so a
+//     relay could swap keys while showing the victim the correct safety code.
+//   * The first key seen for a contact is pinned (trust on first use). If it
+//     later changes:
+//       - for a contact you have NOT verified, the new key is pinned and a
+//         notice shown (you had not confirmed the old one either);
+//       - for a contact you HAVE verified, nothing is re-pinned: a red banner
+//         appears, their messages show as unverified, and sending to them is
+//         held until you review the new code and accept it.
+//   * A share link or QR code carries the sender's fingerprint (#add=…&fp=…);
+//     opening one compares it with the relay's keys and marks the contact
+//     verified on a match — the QR code *is* the out-of-band channel.
+//
+// Pins are kept per relay (usernames are only unique within one relay).
+// ---------------------------------------------------------------------------
+const pinStoreKey = () => `lattix.pins.${serverOrigin()}`;
+function loadPins() {
+  try {
+    const v = JSON.parse(localStorage.getItem(pinStoreKey()) || "{}");
+    return v && typeof v === "object" ? v : {};
+  } catch { return {}; }
+}
+function savePins() {
+  try { localStorage.setItem(pinStoreKey(), JSON.stringify(state.pins)); } catch (_) {}
+}
+function pinKey(username, fp, verified) {
+  state.pins[username] = { fp, verified: !!verified, at: Date.now() };
+  savePins();
+}
+const isVerified = (username) => {
+  const pin = state.pins[username];
+  return !!pin && pin.verified && !state.keyAlerts.has(username);
+};
+
+async function adoptPeerKeys(username, rec) {
+  const fp = await C.fingerprintOf(rec.kem_public_key, rec.dsa_public_key);
+  const out = { ...rec, fingerprint: fp };
+  if (!state.identity || username === state.identity.username) return out;
+  const pin = state.pins[username];
+  if (!pin) {
+    pinKey(username, fp, false);
+  } else if (pin.fp !== fp) {
+    if (pin.verified) {
+      const prev = state.keyAlerts.get(username);
+      if (!prev || prev.newFp !== fp) state.keyAlerts.set(username, { oldFp: pin.fp, newFp: fp, reason: "changed" });
+    } else {
+      pinKey(username, fp, false);
+      toast(`${username}'s safety code changed. If that's unexpected, verify it with them.`, "info");
+    }
+  } else {
+    const prev = state.keyAlerts.get(username);
+    // The keys went back to the pinned ones: a "changed" alert resolves itself.
+    // A share-link mismatch stays until the user deals with it.
+    if (prev && prev.reason === "changed") state.keyAlerts.delete(username);
+  }
+  refreshKeyBanner();
+  return out;
+}
+
+function acceptNewKey(username) {
+  const alert = state.keyAlerts.get(username);
+  if (!alert) return;
+  pinKey(username, alert.newFp, false);
+  state.keyAlerts.delete(username);
+  refreshKeyBanner();
+  toast(`Accepted ${username}'s new safety code. Verify it with them when you can.`);
+}
+
+function setVerified(username, fp, verified) {
+  pinKey(username, fp, verified);
+  state.keyAlerts.delete(username);
+  refreshKeyBanner();
+}
+
+// Members of the current conversation whose key is in question.
+function alertedIn(convo) {
+  if (!convo) return [];
+  const names = convo.type === "group" ? (convo.meta?.members || []).map((m) => m.username) : [convo.id];
+  return names.filter((n) => state.keyAlerts.has(n));
+}
+
+function refreshKeyBanner() {
+  const banner = $("#key-banner");
+  if (!banner) return;
+  const who = alertedIn(curConvo());
+  if (!who.length) { banner.hidden = true; return; }
+  const first = who[0];
+  const reason = state.keyAlerts.get(first).reason;
+  const names = who.join(", ");
+  $("#key-banner-text").replaceChildren(
+    el("strong", {}, reason === "link" ? "Safety code mismatch. " : "Safety code changed. "),
+    reason === "link"
+      ? `The relay's keys for ${names} don't match the code in the link you opened. Someone may be ` +
+        `intercepting this conversation. Sending is paused until you review it.`
+      : `${names} had a verified safety code, and it's different now. That happens when someone ` +
+        `reinstalls or moves devices — or when a relay substitutes keys. Sending is paused until you review it.`);
+  $("#key-banner-review").onclick = () => openFingerprint(first);
+  $("#key-banner-accept").onclick = async () => {
+    const ok = await askModal({
+      title: `Accept ${first}'s new safety code?`,
+      body: "Only do this if you've confirmed the new code with them over another channel, or you accept " +
+            "the risk. The contact is marked unverified until you verify again.",
+      confirmText: "Accept new code", danger: true,
+    });
+    if (ok) acceptNewKey(first);
+  };
+  banner.hidden = false;
+}
+
+// Is the relay publishing OUR keys faithfully? If not, everyone else is
+// being handed a substitute for us.
+async function checkOwnPublishedKeys() {
+  try {
+    const rec = await api.getUser(state.identity.username);
+    const fp = await C.fingerprintOf(rec.kem_public_key, rec.dsa_public_key);
+    if (fp !== state.identity.fingerprint) {
+      askModal({
+        title: "The relay is publishing the wrong keys for you",
+        body: `${serverLabel()} is handing out public keys for ${state.identity.username} that are not the ones ` +
+              `in your vault. Contacts who message you may be encrypting to someone else. Don't trust this relay; ` +
+              `compare safety codes with your contacts over another channel.`,
+        confirmText: "Understood", cancelText: "Close", danger: true,
+      });
+    }
+  } catch (_) { /* offline or old relay — nothing to conclude */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -1118,7 +1278,8 @@ async function selectConversation(cid) {
     $("#verify-peer-btn").textContent = "Info";
     await loadGroup(c.id);
   } else {
-    await getPeerKeys(c.id).catch(() => null);
+    // Re-fetch on open so a key change is noticed now, not at the next reload.
+    await getPeerKeys(c.id, { refresh: true }).catch(() => null);
     fillAvatar($("#peer-avatar"), { name: c.id, avatar: state.peers[c.id]?.avatar });
     $("#peer-name").textContent = c.id;
     $("#peer-status").textContent = state.online.has(c.id) ? "online" : "offline";
@@ -1126,6 +1287,7 @@ async function selectConversation(cid) {
     $("#verify-peer-btn").textContent = "Verify";
     await loadDm(c.id);
   }
+  refreshKeyBanner();
   renderContacts();
   renderMessages({ force: true });
   $("#msg-input").focus();
@@ -1134,19 +1296,32 @@ async function selectConversation(cid) {
 // ---------------------------------------------------------------------------
 // Loading history
 // ---------------------------------------------------------------------------
+// The relay returns at most HISTORY_PAGE envelopes per call, oldest first.
+// One call used to be all a client ever made, so a conversation past 500
+// messages reloaded with only its oldest 500 — and the next live message
+// moved maxId past the gap, hiding everything in between for good.
+async function pullHistory(fetchPage, since, ingest) {
+  for (let guard = 0; guard < 100000; guard++) {
+    const page = await fetchPage(since);
+    for (const env of page) await ingest(env);
+    if (page.length < HISTORY_PAGE) return;
+    since = page[page.length - 1].id;
+  }
+}
+
 async function loadDm(username, { live = true } = {}) {
   const c = ensureDmConvo(username);
-  let envelopes;
-  try { envelopes = await api.conversation(username, c.maxId); }
-  catch { if (live) toast("Could not load conversation", "error"); return; }
-  for (const env of envelopes) await ingestDm(env, { live: false });
+  try {
+    await pullHistory((since) => api.conversation(username, since), c.maxId,
+                      (env) => ingestDm(env, { live: false }));
+  } catch { if (live) toast("Could not load conversation", "error"); }
 }
 async function loadGroup(id, { live = true } = {}) {
   const c = ensureGroupConvo({ id });
-  let envelopes;
-  try { envelopes = await api.groupMessages(id, c.maxId); }
-  catch { if (live) toast("Could not load group", "error"); return; }
-  for (const env of envelopes) await ingestGroup(env, { live: false });
+  try {
+    await pullHistory((since) => api.groupMessages(id, since), c.maxId,
+                      (env) => ingestGroup(env, { live: false }));
+  } catch { if (live) toast("Could not load group", "error"); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1216,8 +1391,8 @@ async function ingestGroup(env, { live = true } = {}) {
   let convo = state.convos[groupCid(env.group_id)];
   if (!convo) { try { convo = await ensureGroupLoaded(env.group_id); } catch { return; } }
   const ctx = "g:" + env.group_id;
-  let senderKeys = (convo.meta?.members || []).find((m) => m.username === env.sender);
-  if (!senderKeys) { try { senderKeys = await getPeerKeys(env.sender); } catch { return; } }
+  let senderKeys;
+  try { senderKeys = await getPeerKeys(env.sender); } catch { return; }
 
   const msg = await decodeEnvelope(env, senderKeys, ctx);
   if (msg) pushMessage(convo, msg, key, env, live);
@@ -1228,20 +1403,25 @@ async function decodeEnvelope(env, senderKeys, ctx) {
   // Carried onto every message so the expiry sweep can find them without a
   // per-message timer.
   const expires_at = env.expires_at || null;
+  // A valid signature from a key we have reason to doubt proves nothing about
+  // who sent it, so it isn't shown (or previewed) as verified.
+  const keyAlert = env.sender !== me && state.keyAlerts.has(env.sender);
   try {
     if (env.kind === "message") {
       const { text, verified } = await C.decryptMessage(
         env.payload, me, state.identity.kem.secretKey, senderKeys.dsa_public_key, ctx);
-      return { id: env.id, from: env.sender, ts: env.created_at, kind: "message", text, verified, expires_at };
+      return { id: env.id, from: env.sender, ts: env.created_at, kind: "message", text,
+               verified: verified && !keyAlert, keyAlert, expires_at };
     }
     if (env.kind === "file") {
-      const ok = C.verifyFilePayload(env.payload, senderKeys.dsa_public_key, ctx);
+      // v2 payloads carry their name/type encrypted; this verifies the
+      // signature and decrypts that metadata (no download).
+      const { meta, verified, legacy } = await C.openFilePayload(
+        env.payload, me, state.identity.kem.secretKey, senderKeys.dsa_public_key, ctx);
       return {
-        id: env.id, from: env.sender, ts: env.created_at, kind: "file", verified: ok, expires_at,
-        file: {
-          file_id: env.payload.file_id, filename: env.payload.filename,
-          mime: env.payload.mime, size: env.payload.size, payload: env.payload, ctx,
-        },
+        id: env.id, from: env.sender, ts: env.created_at, kind: "file",
+        verified: verified && !keyAlert, keyAlert, legacy, expires_at,
+        file: { file_id: env.payload.file_id, ...meta, payload: env.payload, ctx },
       };
     }
     return null;
@@ -1423,7 +1603,9 @@ function renderMessages({ force = false } = {}) {
     else bubble.append(el("div", { class: "msg-text", html: messageHtml(m.text) }));
     bubble.append(el("div", { class: "msg-meta" },
       m.verified ? el("span", { class: "verified", title: "Signature verified" }, "🔒")
-                 : el("span", { class: "unverified", title: "Signature could not be verified" }, "⚠"),
+                 : el("span", { class: "unverified", title: m.keyAlert
+                     ? "Received while this contact's safety code was in question"
+                     : "Signature could not be verified" }, "⚠"),
       " ", fmtTime(m.ts)));
     const row = el("div", {
       class: "row " + (mine ? "right" : "left") + (sameRun ? " same" : ""),
@@ -1588,6 +1770,15 @@ function recipientsFor(convo) {
 }
 const ctxFor = (convo) => (convo.type === "group" ? "g:" + convo.id : "");
 
+// Refuse to encrypt to a key the user has been warned about.
+function assertSendable(convo) {
+  const held = alertedIn(convo);
+  if (held.length) {
+    refreshKeyBanner();
+    throw new Error(`${held.join(", ")}'s safety code needs review before you can send`);
+  }
+}
+
 async function sendCurrent() {
   const c = curConvo();
   const input = $("#msg-input");
@@ -1604,6 +1795,7 @@ async function sendCurrent() {
   try {
     if (c.type === "group") await ensureGroupLoaded(c.id);
     else await getPeerKeys(c.id);
+    assertSendable(c);
     const payload = await C.encryptMessage(text, recipientsFor(c), state.identity.dsa.secretKey, ctxFor(c));
     const ttl = getTtl(c.cid) || undefined;
     let env;
@@ -1661,6 +1853,7 @@ async function sendFile(file) {
   try {
     if (c.type === "group") await ensureGroupLoaded(c.id);
     else await getPeerKeys(c.id);
+    assertSendable(c);
     setComposerBusy(true, `Encrypting ${file.name}…`);
     const bytes = new Uint8Array(await file.arrayBuffer());
     const meta = { filename: file.name, mime: file.type || "application/octet-stream", size: bytes.length };
@@ -1670,7 +1863,9 @@ async function sendFile(file) {
     const { file_id } = await api.uploadFile(cipherBytes, bytes.length);
     payload.file_id = file_id;
     const ttl = getTtl(c.cid) || undefined;
-    const body = { file_id, filename: meta.filename, mime: meta.mime, size: meta.size, payload, ttl };
+    // The real name and type are inside payload.meta_ct. The relay's API still
+    // wants the fields, so it gets neutral placeholders.
+    const body = { file_id, filename: "file", mime: "application/octet-stream", size: meta.size, payload, ttl };
     let env;
     if (c.type === "group") env = await api.sendGroupFile(c.id, body);
     else env = await api.sendFileMessage({ recipient: c.id, ...body });
@@ -1788,19 +1983,50 @@ function openUserSearch() {
 // ---------------------------------------------------------------------------
 async function openFingerprint(username) {
   const modal = $("#fp-modal");
-  let fp, keys;
-  if (username === state.identity.username) {
+  const self = username === state.identity.username;
+  let fp;
+  if (self) {
     fp = state.identity.fingerprint;
   } else {
-    keys = await getPeerKeys(username).catch(() => null);
+    // Always fresh, always computed from the keys (see adoptPeerKeys).
+    const keys = await getPeerKeys(username, { refresh: true }).catch(() => null);
     if (!keys) return toast("Could not load key", "error");
     fp = keys.fingerprint;
   }
-  $("#fp-title").textContent = username === state.identity.username ? "Your safety code" : `Verify ${username}`;
+  $("#fp-title").textContent = self ? "Your safety code" : `Verify ${username}`;
   $("#fp-value").textContent = C.prettyFingerprint(fp);
-  $("#fp-hint").textContent = username === state.identity.username
+  $("#fp-hint").textContent = self
     ? "Share this with contacts so they can confirm they're talking to you."
-    : "Compare this with the value shown on their device. If it matches, the channel is authentic and free of a man-in-the-middle.";
+    : "Compare this with the code on their device — in person, on a call, or by scanning their QR code. " +
+      "If it matches, the channel is authentic and free of a man-in-the-middle.";
+
+  const status = $("#fp-status"), actions = $("#fp-actions"), toggle = $("#fp-toggle");
+  status.className = "fine fp-status";
+  status.replaceChildren();
+  actions.hidden = self;
+  if (!self) {
+    const alert = state.keyAlerts.get(username);
+    const verified = isVerified(username);
+    if (alert) {
+      status.classList.add("warn");
+      status.append(alert.reason === "link" ? "⚠ Doesn't match the code in the link you opened: "
+                                            : "⚠ Changed. You had verified: ",
+                    el("code", {}, C.prettyFingerprint(alert.oldFp)));
+    } else if (verified) {
+      status.classList.add("ok");
+      status.append("✓ Verified");
+    } else {
+      status.append("Not verified yet");
+    }
+    toggle.textContent = verified ? "Remove verification" : "Codes match — mark as verified";
+    toggle.className = verified ? "btn" : "primary";
+    toggle.onclick = () => {
+      setVerified(username, fp, !verified);
+      toast(verified ? `${username} is no longer marked verified` : `${username} marked as verified`, "success");
+      closeModal(modal);
+      if (curConvo()) renderMessages({ force: false });
+    };
+  }
   openModal(modal, "#fp-close");
 }
 
@@ -1967,16 +2193,41 @@ function drawQr(canvas, text) {
 }
 
 // Deep link: #add=<username>&fp=<fingerprint>
-function processDeepLink() {
+async function processDeepLink() {
   const hash = location.hash.replace(/^#/, "");
   if (!hash.startsWith("add=") && !hash.includes("add=")) return;
   const params = new URLSearchParams(hash);
-  const who = params.get("add");
+  const who = (params.get("add") || "").toLowerCase();
+  const linkFp = (params.get("fp") || "").toLowerCase();
   history.replaceState(null, "", location.pathname + location.search);
   if (!who || who === state.identity.username) return;
-  ensureDmConvo(who.toLowerCase());
-  selectConversation(dmCid(who.toLowerCase()));
-  toast(`Opening chat with ${who} — verify their safety code`, "success");
+  ensureDmConvo(who);
+  await selectConversation(dmCid(who));
+
+  // The link came from the contact (QR code, message), not from the relay:
+  // it is the out-of-band copy of their safety code. Check it.
+  if (!/^[0-9a-f]{64}$/.test(linkFp)) {
+    toast(`Opening chat with ${who} — verify their safety code`, "success");
+    return;
+  }
+  let keys;
+  try { keys = await getPeerKeys(who); } catch { return toast(`Couldn't load ${who}'s keys`, "error"); }
+  if (keys.fingerprint === linkFp) {
+    setVerified(who, linkFp, true);
+    toast(`${who}'s safety code matches the link — marked as verified`, "success");
+  } else {
+    state.keyAlerts.set(who, { oldFp: linkFp, newFp: keys.fingerprint, reason: "link" });
+    refreshKeyBanner();
+    renderMessages({ force: false });
+    const review = await askModal({
+      title: "Safety code mismatch",
+      body: `The link you opened says ${who}'s safety code is ${C.prettyFingerprint(linkFp).slice(0, 19)}…, ` +
+            `but the relay is serving keys with a different code. Someone may be intercepting this ` +
+            `conversation. Sending to ${who} is paused.`,
+      confirmText: "Review", cancelText: "Close", danger: true,
+    });
+    if (review) openFingerprint(who);
+  }
 }
 
 // ---------------------------------------------------------------------------

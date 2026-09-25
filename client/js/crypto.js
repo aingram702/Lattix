@@ -138,29 +138,108 @@ export async function decryptMessage(payload, myUsername, myKemSecretB64, sender
 }
 
 // ---- files ----
+//
+// Format v2 (Lattix 2.2+). Two things were wrong with v1:
+//
+//   * The signature covered the file's *metadata* and wrapped keys, but not
+//     its ciphertext. Everyone a file is addressed to holds its CEK, so any
+//     recipient — in a group, any member — could encrypt different bytes
+//     under the same CEK/IV and, with the relay's help, serve them under the
+//     sender's perfectly valid signature.
+//   * filename, MIME type and size rode in the payload in plaintext, so the
+//     relay (which the docs say sees only ciphertext) could read every name.
+//
+// v2 encrypts the metadata under the CEK (its own IV) and signs a SHA-256 of
+// the file ciphertext. The transcript uses a new domain prefix, so stripping
+// a v2 payload back to v1 shape just yields a signature that doesn't verify.
+// v1 payloads are still read (older clients, stored history), flagged legacy.
+const FILE_V2 = "lattix-file-v2";
+
+async function sha256(bytes) {
+  return new Uint8Array(await subtle.digest("SHA-256", bytes));
+}
+function fileV2Transcript(payload, context) {
+  // Every variable-length field is either last or length-fixed, and the
+  // context is NUL-delimited, so no two payloads share a transcript.
+  const prefix = enc.encode(`${FILE_V2}\0${context}\0`);
+  const fixed = concat(b64ToBytes(payload.iv), b64ToBytes(payload.meta_iv), b64ToBytes(payload.ct_sha256));
+  return buildTranscript(prefix, fixed, b64ToBytes(payload.meta_ct), payload.keys);
+}
+function isFileV2(payload) {
+  return !!payload && payload.v === 2 && typeof payload.meta_ct === "string";
+}
+
 export async function encryptFile(fileBytes, meta, recipients, senderDsaSecretB64, context = "") {
   const cekRaw = randomBytes(32);
   const cek = await importAesKey(cekRaw, ["encrypt"]);
   const iv = randomBytes(12);
   const cipherBytes = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, cek, fileBytes));
+  const metaIv = randomBytes(12);
+  const metaCt = new Uint8Array(await subtle.encrypt(
+    { name: "AES-GCM", iv: metaIv }, cek,
+    enc.encode(JSON.stringify({ filename: meta.filename, mime: meta.mime, size: meta.size }))));
   const keys = await wrapCekForParties(cekRaw, recipients);
-  const metaBytes = enc.encode(context + JSON.stringify({ filename: meta.filename, mime: meta.mime, size: meta.size }));
-  const transcript = buildTranscript(metaBytes, iv, new Uint8Array(0), keys);
-  const signature = ml_dsa65.sign(b64ToBytes(senderDsaSecretB64), transcript);
   const payload = {
-    filename: meta.filename, mime: meta.mime, size: meta.size,
-    iv: bytesToB64(iv), keys, signature: bytesToB64(signature),
+    v: 2,
+    iv: bytesToB64(iv),
+    meta_iv: bytesToB64(metaIv),
+    meta_ct: bytesToB64(metaCt),
+    ct_sha256: bytesToB64(await sha256(cipherBytes)),
+    keys,
   };
+  payload.signature = bytesToB64(ml_dsa65.sign(b64ToBytes(senderDsaSecretB64), fileV2Transcript(payload, context)));
   return { cipherBytes, payload };
 }
+
+// v1 (legacy) signature check — metadata + wrapped keys only.
 export function verifyFilePayload(payload, senderDsaPubB64, context = "") {
+  if (isFileV2(payload)) {
+    return ml_dsa65.verify(b64ToBytes(senderDsaPubB64), fileV2Transcript(payload, context), b64ToBytes(payload.signature));
+  }
   const metaBytes = enc.encode(context + JSON.stringify({ filename: payload.filename, mime: payload.mime, size: payload.size }));
   const transcript = buildTranscript(metaBytes, b64ToBytes(payload.iv), new Uint8Array(0), payload.keys);
   return ml_dsa65.verify(b64ToBytes(senderDsaPubB64), transcript, b64ToBytes(payload.signature));
 }
+
+/**
+ * Verify a file envelope and recover its metadata, without downloading it.
+ * Resolves to { meta: {filename, mime, size}, verified, legacy }.
+ * A v2 payload whose signature fails throws — its metadata can't be trusted
+ * or even read. A v1 payload is returned with verified=false on failure (the
+ * UI then shows it as an inert, unverified file card) and legacy=true.
+ */
+export async function openFilePayload(payload, myUsername, myKemSecretB64, senderDsaPubB64, context = "") {
+  if (!isFileV2(payload)) {
+    return {
+      meta: { filename: String(payload.filename || "file"), mime: String(payload.mime || ""), size: Number(payload.size) || 0 },
+      verified: verifyFilePayload(payload, senderDsaPubB64, context),
+      legacy: true,
+    };
+  }
+  if (!verifyFilePayload(payload, senderDsaPubB64, context)) {
+    throw new Error("File signature verification failed — not authentic");
+  }
+  const entry = payload.keys[myUsername];
+  if (!entry) throw new Error("This file was not addressed to you");
+  const cek = await importAesKey(await unwrapCek(entry, myKemSecretB64), ["decrypt"]);
+  const raw = await subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(payload.meta_iv) }, cek, b64ToBytes(payload.meta_ct));
+  const m = JSON.parse(dec.decode(raw));
+  return {
+    meta: { filename: String(m.filename || "file"), mime: String(m.mime || ""), size: Number(m.size) || 0 },
+    verified: true,
+    legacy: false,
+  };
+}
+
 export async function decryptFile(cipherBytes, payload, myUsername, myKemSecretB64, senderDsaPubB64, context = "") {
   if (!verifyFilePayload(payload, senderDsaPubB64, context)) {
     throw new Error("File signature verification failed — not authentic");
+  }
+  if (isFileV2(payload)) {
+    const got = bytesToB64(await sha256(cipherBytes));
+    if (got !== payload.ct_sha256) {
+      throw new Error("File contents don't match what the sender signed — not authentic");
+    }
   }
   const entry = payload.keys[myUsername];
   if (!entry) throw new Error("This file was not addressed to you");
@@ -171,22 +250,42 @@ export async function decryptFile(cipherBytes, payload, myUsername, myKemSecretB
 }
 
 // ---- local encrypted vault ----
-async function vaultKey(password, salt) {
+//
+// PBKDF2-SHA-256 work factor. 250k was the original value; OWASP's current
+// guidance for PBKDF2-HMAC-SHA256 is 600k. The count is stored with every
+// vault and backup (`iter`), so old files (no `iter`) still open at 250k and
+// the app re-seals a vault at the current count after a successful unlock.
+export const VAULT_ITERATIONS = 600_000;
+const LEGACY_ITERATIONS = 250_000;
+
+async function vaultKey(password, salt, iterations = VAULT_ITERATIONS) {
   const base = await subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
   return subtle.deriveKey(
-    { name: "PBKDF2", hash: "SHA-256", salt, iterations: 250000 },
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations },
     base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
   );
+}
+function iterationsOf(sealed) {
+  const n = Number(sealed && sealed.iter);
+  // Refuse absurd values from a tampered file instead of hanging the tab.
+  if (!n) return LEGACY_ITERATIONS;
+  if (!Number.isInteger(n) || n < 100_000 || n > 10_000_000) throw new Error("Unsupported vault parameters");
+  return n;
+}
+/** True when a vault was sealed below the current work factor. */
+export function vaultNeedsUpgrade(vault) {
+  try { return iterationsOf(vault) < VAULT_ITERATIONS; } catch (_) { return false; }
 }
 export async function sealVault(identity, password) {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
   const key = await vaultKey(password, salt);
   const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(JSON.stringify(identity))));
-  return { v: 1, salt: bytesToB64(salt), iv: bytesToB64(iv), ciphertext: bytesToB64(ct) };
+  return { v: 2, kdf: "pbkdf2-sha256", iter: VAULT_ITERATIONS, salt: bytesToB64(salt), iv: bytesToB64(iv), ciphertext: bytesToB64(ct) };
 }
 export async function openVault(vault, password) {
-  const key = await vaultKey(password, b64ToBytes(vault.salt));
+  if (!vault || !vault.salt || !vault.iv || !vault.ciphertext) throw new Error("Not a Lattix vault file");
+  const key = await vaultKey(password, b64ToBytes(vault.salt), iterationsOf(vault));
   try {
     const pt = await subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(vault.iv) }, key, b64ToBytes(vault.ciphertext));
     return JSON.parse(dec.decode(pt));
@@ -198,17 +297,18 @@ export async function openVault(vault, password) {
 // ---- encrypted chat backup ----
 // A password-sealed backup of arbitrary data (chat history, settings, …).
 // Same PBKDF2 + AES-256-GCM construction as the vault: without the password
-// the file is opaque ciphertext — it "cannot be stolen and opened".
+// the file is opaque ciphertext.
 export async function sealBackup(data, password) {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
   const key = await vaultKey(password, salt);
   const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(JSON.stringify(data))));
-  return { app: "lattix", kind: "backup", v: 1, salt: bytesToB64(salt), iv: bytesToB64(iv), ciphertext: bytesToB64(ct) };
+  return { app: "lattix", kind: "backup", v: 2, kdf: "pbkdf2-sha256", iter: VAULT_ITERATIONS,
+           salt: bytesToB64(salt), iv: bytesToB64(iv), ciphertext: bytesToB64(ct) };
 }
 export async function openBackup(backup, password) {
   if (!backup || backup.kind !== "backup") throw new Error("Not a Lattix backup file");
-  const key = await vaultKey(password, b64ToBytes(backup.salt));
+  const key = await vaultKey(password, b64ToBytes(backup.salt), iterationsOf(backup));
   try {
     const pt = await subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(backup.iv) }, key, b64ToBytes(backup.ciphertext));
     return JSON.parse(dec.decode(pt));

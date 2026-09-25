@@ -29,7 +29,15 @@ These are not env-configurable but are worth knowing:
 - **Orphaned file blobs:** the background sweep runs every 60 s and deletes any
   encrypted blob that no message references, once it is more than 6 hours old
   (the grace period covers an upload whose message hasn't been posted yet).
-- **Vault & backup KDF:** PBKDF2-SHA-256, 250,000 iterations (client-side).
+  A blob behind an **expired disappearing message** is deleted in the same sweep
+  that expires the message (2.2).
+- **History page size:** 500 envelopes per history request, advertised as
+  `history_page_size` in `/api/health`; the client pages until it has everything.
+- **Vault & backup KDF:** PBKDF2-SHA-256, 600,000 iterations (client-side,
+  recorded in each file). Files from before 2.2 open at 250,000 and the vault is
+  re-sealed at 600,000 after the next unlock.
+- **Key pins:** stored in the browser per relay (`lattix.pins.<relay origin>`);
+  cleared by **Delete application data**.
 - **Message payload cap:** ~2 MB of JSON (file *contents* go through
   `/api/files`, not the message payload).
 - **Disappearing-message timers:** Off / 30 s / 5 min / 1 h / 1 day / 1 week
@@ -38,9 +46,9 @@ These are not env-configurable but are worth knowing:
 - **Message render window:** the most recent 200 messages are kept in the DOM;
   older ones load on demand via **Load earlier** (client-side only — nothing is
   dropped from memory or from the server).
-- **Inline image previews:** limited to image MIME types under a fixed size cap,
-  and only for messages whose signature verified. Off by default
-  (**Settings → Media**).
+- **Inline image previews:** PNG, JPEG, GIF, WebP and AVIF up to 8 MB, and only
+  for files whose signature verified (never SVG). **On by default**; turn off
+  under **Settings → Media**.
 - **WebSocket reconnect:** exponential backoff with ±20% jitter, factor 1.6,
   capped at 20 s; immediate when the network or the tab comes back.
 - **WebSocket heartbeat:** ping every 25 s; no pong within 10 s drops and

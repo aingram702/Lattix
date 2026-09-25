@@ -17,8 +17,11 @@ security features work, see [Cryptography](Cryptography) and
 - **Inline image previews** — received images are decrypted and displayed in the
   conversation, and click to open a full-size lightbox. This is applied **only to
   messages whose signature verified**: a forged or tampered envelope stays an
-  inert file card you have to open deliberately. Turn it on under
-  **Settings → Media → Show images inline** (off by default).
+  inert file card you have to open deliberately. On by default; turn it off
+  under **Settings → Media → Show images inline**. SVG is never previewed.
+- **Private file names** (2.2) — a file's name, type and size are encrypted with
+  it; the relay only ever stores placeholders. The sender's signature covers the
+  file's contents, so nobody else who received it can swap the bytes.
 - **Delivery** — messages arrive in real time over WebSocket when the recipient
   is online, and are queued on the server for delivery when they next connect. If
   the socket drops, the client reconnects with exponential backoff.
@@ -89,16 +92,30 @@ Blocked users**. Blocking is enforced on your device.
 ## Safety-code verification
 
 Header **Verify** button (or **Settings** for your own code). Compare the code
-with your contact out-of-band (in person, over a call). Matching codes prove no
-one substituted keys in the middle. This is the core anti-MITM defense.
+with your contact out-of-band (in person, over a call) and click **Codes match —
+mark as verified**. Matching codes prove no one substituted keys in the middle.
+This is the core anti-MITM defense.
+
+The code is computed on your device from the keys actually in use, never taken
+from the relay (2.2). The first key seen for each contact is pinned.
+
+## Key-change banner
+
+If a contact you **verified** gets a different key — a reinstall, a new device,
+or a relay substituting keys — a red banner appears in the conversation. Their
+new messages show ⚠ instead of 🔒 and **sending to them pauses** until you choose
+**Review** (compare the new code) or **Accept new code** (which marks them
+unverified). An unverified contact's new key is simply re-pinned with a notice.
+In a group, one verified member with a changed key pauses sending to the group.
 
 ## QR code / share link
 
 Click the 🔗 button to open **Share my link**. It shows a scannable **QR code**
 (generated fully offline — no CDN) and a copyable URL of the form
 `https://your-server/#add=<username>&fp=<fingerprint>`. When someone opens that
-link in their Lattix, it opens a conversation with you, pre-loaded for
-safety-code verification.
+link in their Lattix, it opens a conversation with you and **checks the code in
+the link against the keys the relay serves**: a match marks you verified on
+their side automatically; a mismatch warns them and pauses sending.
 
 ## Profile images
 

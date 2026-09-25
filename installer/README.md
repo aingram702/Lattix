@@ -28,7 +28,7 @@ it with an app-menu entry and a `lattix` launcher — per-user by default, or
 system-wide (`/opt/lattix`) when run as root.
 
 **Build via CI (recommended):** the
-[`build-linux-installer`](../../.github/workflows/build-linux-installer.yml)
+[`build-linux-installer`](../.github/workflows/build-linux-installer.yml)
 workflow builds it on `ubuntu-latest`. Download the `.run` from the run's
 Artifacts, or push a `v*` tag to attach it to a release.
 
@@ -41,10 +41,10 @@ installer/linux/build.sh            # -> installer/linux/Output/Lattix-<ver>-<ar
 **Install / uninstall:**
 
 ```bash
-chmod +x Lattix-2.1.0-x86_64.run
-./Lattix-2.1.0-x86_64.run           # per-user (or system-wide if run as root)
-./Lattix-2.1.0-x86_64.run --user    # force per-user even as root
-./Lattix-2.1.0-x86_64.run --uninstall
+chmod +x Lattix-2.2.0-x86_64.run
+./Lattix-2.2.0-x86_64.run           # per-user (or system-wide if run as root)
+./Lattix-2.2.0-x86_64.run --user    # force per-user even as root
+./Lattix-2.2.0-x86_64.run --uninstall
 ```
 
 ---
@@ -55,7 +55,7 @@ A standard drag-to-install disk image containing `Lattix.app` next to an
 `/Applications` shortcut.
 
 **Build via CI (recommended):** the
-[`build-macos-installer`](../../.github/workflows/build-macos-installer.yml)
+[`build-macos-installer`](../.github/workflows/build-macos-installer.yml)
 workflow builds it on `macos-latest`. Download the `.dmg` from the run's
 Artifacts, or push a `v*` tag to attach it to a release.
 
@@ -79,12 +79,12 @@ Start Menu / Desktop shortcuts.
 ### Build via CI (recommended)
 
 No Windows machine required. The workflow
-[`build-windows-installer`](../../.github/workflows/build-windows-installer.yml)
+[`build-windows-installer`](../.github/workflows/build-windows-installer.yml)
 builds the installer on a `windows-latest` runner.
 
 - **On demand:** GitHub → *Actions* → *Build Windows installer* → *Run
   workflow*. Download `LattixSetup.exe` from the run's *Artifacts*.
-- **On release:** push a tag like `v2.1.0`; the installer is built and attached
+- **On release:** push a tag like `v2.2.0`; the installer is built and attached
   to the GitHub Release automatically.
 
 ### Build locally on Windows

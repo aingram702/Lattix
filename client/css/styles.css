@@ -770,3 +770,20 @@ kbd {
    message in the body colour and mark it with a red glyph instead. */
 #server-hint.err { color: var(--text); }
 #server-hint.err::before { content: "✕ "; content: "✕ " / ""; color: var(--danger); font-weight: 700; }
+
+/* ---- Key-change banner (conversation) and safety-code status ---- */
+.key-banner {
+  display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  margin: 8px 12px 0; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--text, inherit); font-size: 13px; line-height: 1.4;
+}
+.key-banner[hidden] { display: none; }
+.key-banner-text { flex: 1 1 260px; min-width: 0; }
+.key-banner-text strong { color: var(--danger); }
+.key-banner-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.fp-status { font-weight: 600; }
+.fp-status.ok { color: #2fbf71; }
+.fp-status.warn { color: var(--danger); }
+.fp-status code { font-weight: 400; word-break: break-all; }

@@ -33,6 +33,25 @@ MV3 extension). Key modules:
 Private keys live only in memory after the encrypted **vault** is unlocked; the
 vault (and encrypted backups) are sealed with your password.
 
+### Key trust
+
+Every public-key record from the relay — a DM contact, a group member, a message
+sender — passes through `adoptPeerKeys()` in `app.js`, which computes the
+fingerprint from the keys and compares it with the **pin** stored for that
+contact (`lattix.pins.<relay origin>` in `localStorage`). A mismatch for a
+verified contact is recorded in `state.keyAlerts`; while an alert stands, the
+conversation shows the red banner, messages from that sender render as
+unverified, and `assertSendable()` refuses to encrypt to them. Share links
+(`#add=…&fp=…`) are checked in `processDeepLink()`. See
+[Security & Trust Model](Security-and-Trust-Model).
+
+### Loading history
+
+History endpoints return at most `history_page_size` envelopes (500) oldest
+first. `pullHistory()` pages with `?since=<last id>` until a short page, both at
+boot and in the resync after every reconnect, so a conversation of any length
+loads completely.
+
 ### Rendering
 
 `app.js` holds decrypted conversation state in memory and renders from it. Two
@@ -54,9 +73,12 @@ than one `setTimeout` registered per message at ingest.
 A single-process **FastAPI + uvicorn** app in `server/`:
 
 - `main.py` — REST endpoints, the `/ws` WebSocket, static hosting of the client,
-  in-memory token store, per-IP rate limiting, and a background sweep that purges
-  expired (disappearing) messages.
-- `database.py` — SQLite storage layer (guarded by a lock; single connection).
+  in-memory token store, per-IP rate limiting, and a background sweep (every
+  60 s) that purges expired disappearing messages with their file blobs, and
+  orphaned blobs older than 6 hours.
+- `database.py` — SQLite storage layer (WAL mode, one connection guarded by a
+  lock). Schema changes are applied by `_migrate()` at startup, so a database
+  from any earlier version opens in place.
 - `models.py` — Pydantic request/response schemas. Message/file payloads are
   treated as **opaque** blobs — the server never inspects the crypto structure.
 
@@ -90,8 +112,8 @@ and pub/sub into Redis. See
    for itself via ML-KEM-768 + HKDF. It signs the envelope with ML-DSA-65.
 2. `POST /api/messages` stores the envelope and pushes it over `/ws` to the
    recipient (and the sender's other sessions) if online.
-3. Offline recipients fetch it later via `GET /api/conversations/{peer}` or
-   `GET /api/inbox`.
+3. Offline recipients fetch it later via `GET /api/conversations/{peer}`
+   (paged).
 4. The recipient verifies the signature, unwraps their CEK, and decrypts.
 
 Groups work the same way, wrapping the CEK for every member and binding the
@@ -101,14 +123,15 @@ signature to the group id. See [Cryptography](Cryptography).
 
 | Table | Holds |
 |-------|-------|
-| `users` | username, **public** KEM/DSA keys, fingerprint, auth salt + PBKDF2 hash, optional avatar. |
+| `users` | username, **public** KEM/DSA keys, fingerprint (checked against the keys at registration), auth salt + PBKDF2 hash, optional avatar. |
 | `envelopes` | 1:1 messages/files: sender, recipient, kind, **opaque** payload, optional `file_id`, `expires_at`. |
-| `files` | uploaded **ciphertext** blobs + plaintext size (metadata only). |
-| `groups`, `group_members` | group metadata and membership. |
+| `files` | uploaded **ciphertext** blobs, uploader, plaintext size (metadata only). |
+| `groups`, `group_members` | group name, icon, owner; membership with join time (used to pick a new owner when the owner leaves or deletes their account). |
 | `group_envelopes` | group messages/files (opaque payload, `expires_at`). |
 
 The database file holds everything (including file blobs), so persisting a
-single `/data` volume is all that's needed for durability.
+single `/data` volume is all that's needed for durability. Back it up with
+SQLite's online backup, not `cp` — see [Self-Hosting & Deployment](Self-Hosting-and-Deployment).
 
 ## Project layout
 
@@ -123,6 +146,8 @@ Lattix/                        # repository root
 ├── client/                    # single-page app (also a Chrome extension)
 │   ├── index.html  css/  js/  vendor/  icons/  manifest.json  background.js
 ├── installer/                 # Windows / macOS / Linux installer builds
-└── scripts/                   # vendor build, protocol test, nine browser UI suites
-    └── lib/harness.mjs        #   shared signup/unlock test helpers
+├── scripts/                   # vendor build, runner, 15 test suites
+│   └── lib/harness.mjs        #   shared signup/unlock test helpers
+├── docs/                      # screenshots, design notes, reviews/
+└── wiki/                      # this documentation
 ```

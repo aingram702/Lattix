@@ -1,0 +1,13 @@
+Lattix 2.2.0 — changed files bundle
+===================================
+Extract over the repository root, preserving paths. Then:
+
+  1. DELETE the old root file  REVIEW-2.1.1.md
+     (it moved to docs/reviews/REVIEW-2.1.1.md, included here).
+  2. Commit and push. The new Tests workflow runs automatically.
+  3. Tag v2.2.0 to build and attach the installers.
+
+On your VPS:  sudo bash /opt/lattix/app/deploy/vps/install-debian.sh --update
+Check:        curl https://<your-domain>/api/health   -> "version":"2.2.0"
+
+Full write-up: docs/reviews/REVIEW-2.2.0.md

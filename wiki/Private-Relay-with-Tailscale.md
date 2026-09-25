@@ -64,7 +64,7 @@ restarts on boot. It binds `127.0.0.1:8000` by default.
 
 ```bash
 curl http://127.0.0.1:8000/api/health
-# -> {"status":"ok","version":"2.1.0","max_file_bytes":52428800}
+# -> {"status":"ok","version":"2.2.0","max_file_bytes":52428800,"history_page_size":500,...}
 ```
 
 ---
@@ -164,10 +164,14 @@ path is a better fit.
   relay up; `tailscale serve --bg` and `tailscaled` survive reboots.
 - **Updates:** `docker pull`/rebuild and `docker compose`/`docker run` again for
   Lattix; `sudo tailscale update` for Tailscale. Keep the host patched.
-- **Backups:** everything is one SQLite file. With the Docker setup:
+- **Backups:** everything is one SQLite file, running in WAL mode — so use
+  SQLite's online backup rather than `cp`, which can miss recent writes. With
+  the `docker run` setup above (container named `lattix`):
   ```bash
-  docker run --rm -v lattix-data:/data -v "$PWD":/backup alpine \
-    cp /data/lattix.db /backup/lattix-backup-$(date +%F).db
+  docker exec lattix python -c \
+    "import sqlite3; d=sqlite3.connect('/data/backup.db'); sqlite3.connect('/data/lattix.db').backup(d); d.close()"
+  docker cp lattix:/data/backup.db ./lattix-backup-$(date +%F).db
+  docker exec lattix rm /data/backup.db
   ```
 - **Handy commands:**
   ```bash

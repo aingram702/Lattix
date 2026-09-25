@@ -63,10 +63,13 @@ screen. The app container is **not** published to the host (only Caddy is), so
 `LATTIX_FORWARDED_ALLOW_IPS=*` is safe there.
 
 **Update:** `git pull && docker compose up -d --build`.
-**Back up:**
+**Back up** with SQLite's online backup — the database runs in WAL mode, and a
+plain `cp` of the live file can miss recent writes entirely:
 ```bash
-docker run --rm -v deploy_lattix-data:/data -v "$PWD":/backup alpine \
-  cp /data/lattix.db /backup/lattix-backup-$(date +%F).db
+docker compose exec -T lattix python -c \
+  "import sqlite3; d=sqlite3.connect('/data/backup.db'); sqlite3.connect('/data/lattix.db').backup(d); d.close()"
+docker compose cp lattix:/data/backup.db ./lattix-backup-$(date +%F).db
+docker compose exec -T lattix rm /data/backup.db
 ```
 
 ### Prebuilt image

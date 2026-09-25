@@ -3,10 +3,12 @@
 # Lattix
 
 **Quantum-resistant chat & file sharing.**
-End-to-end encrypted messaging built entirely on NIST post-quantum cryptography — with a clean, themeable, accessible single-page UI and one-click installers for Windows, macOS, and Linux.
+End-to-end encrypted messaging built entirely on NIST post-quantum cryptography — a clean, themeable, accessible single-page app, a self-hostable zero-knowledge relay, and one-click installers for Windows, macOS, and Linux.
 
-**Version 2.0** · [What's new](#whats-new-in-20)
+**Version 2.2.0** · [What's new](#whats-new-in-22) · [Wiki](wiki/Home.md) · [Deploy](DEPLOYMENT.md)
 
+[![Tests](https://github.com/aingram702/Lattix/actions/workflows/tests.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/tests.yml)
+[![Docker image](https://github.com/aingram702/Lattix/actions/workflows/docker-image.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/docker-image.yml)
 [![Windows installer](https://github.com/aingram702/Lattix/actions/workflows/build-windows-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-windows-installer.yml)
 [![Linux installer](https://github.com/aingram702/Lattix/actions/workflows/build-linux-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-linux-installer.yml)
 [![macOS installer](https://github.com/aingram702/Lattix/actions/workflows/build-macos-installer.yml/badge.svg)](https://github.com/aingram702/Lattix/actions/workflows/build-macos-installer.yml)
@@ -15,23 +17,21 @@ End-to-end encrypted messaging built entirely on NIST post-quantum cryptography 
 
 </div>
 
-Every message and file is encrypted **in your browser** before it ever touches the network. The server is a **zero-knowledge relay**: it stores public keys, opaque ciphertext, and encrypted blobs it cannot read. It can't read your messages, and it can't forge them — recipients verify a post-quantum signature on every message.
+Every message and file is encrypted **in your browser** before it touches the network. The server is a **zero-knowledge relay**: it stores public keys, opaque ciphertext, and encrypted blobs. It can't read your messages or your files — including their names — and it can't forge them: recipients verify a post-quantum signature on every message and file. Safety codes are computed on your device from the keys actually in use, and pinned, so a relay that swaps keys gets caught.
 
 ---
 
 ## Table of contents
 
-- [What's new in 2.0](#whats-new-in-20)
+- [What's new in 2.2](#whats-new-in-22)
 - [Cryptography](#cryptography)
 - [How a message is protected](#how-a-message-is-protected)
+- [Trust model](#trust-model)
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [Get started](#get-started)
-  - [Install (Windows / macOS / Linux)](#install-a-standalone-app)
-  - [Run from source](#run-from-source)
-  - [Chrome extension](#chrome-extension)
 - [Host it (reachable from anywhere)](#host-it-reachable-from-anywhere)
-- [Trust model](#trust-model)
+- [Configuration reference](#configuration-reference)
 - [Project layout](#project-layout)
 - [Development](#development)
 - [Security notes & limitations](#security-notes--limitations)
@@ -39,76 +39,113 @@ Every message and file is encrypted **in your browser** before it ever touches t
 
 ---
 
+## What's new in 2.2
+
+2.2 is a **security release** that came out of a full code review. Every finding
+was reproduced against a live relay before it was fixed, and each one now has a
+regression test. The full write-up is in
+[`docs/reviews/REVIEW-2.2.0.md`](docs/reviews/REVIEW-2.2.0.md).
+
+**Safety codes you can actually rely on.** Earlier builds displayed the
+fingerprint *the relay reported*, not one computed from the keys the client
+encrypted to — so a malicious relay could swap a contact's keys and still show
+you their correct safety code. Fingerprints are now always computed on-device,
+and the first key seen for each contact is **pinned**. If a contact you verified
+changes keys, a red banner appears, their new messages show as unverified, and
+**sending to them pauses** until you review and accept the new code.
+
+**The QR code is a real verification.** Share links and QR codes have always
+carried the owner's fingerprint (`#add=<user>&fp=<code>`); the app used to ignore
+it. Opening one now compares it with the relay's keys — a match marks the contact
+verified, a mismatch raises a warning and holds sending.
+
+**Files: encrypted names, signed contents.** File names, types and sizes are now
+encrypted (the relay stores placeholders), and the sender's signature covers a
+hash of the file ciphertext. Previously any recipient of a group file could
+substitute different bytes under the sender's valid signature. Files from 2.1.x
+still open.
+
+**Stronger vault.** New vaults and backups use PBKDF2-SHA-256 at **600,000**
+iterations (was 250,000), with the count recorded in the file. Existing vaults
+open as before and are re-sealed at the new strength after your next unlock.
+
+**Relay fixes.** Deleting a group owner's account no longer deletes the group for
+everyone (ownership passes to the longest-standing member). Conversations longer
+than 500 messages load completely (the client now pages history). Databases from
+1.x no longer crash on startup. Deleted accounts' live connections are closed.
+Expired disappearing *files* are erased at once rather than hours later. The
+directory refuses keys that don't match their fingerprint.
+
+**CI.** The installer and Docker workflows pointed at a `Lattix/` subdirectory
+that doesn't exist; they now build from the repository root. A new **Tests**
+workflow runs all 15 suites on every push and pull request.
+
+> **Upgrading:** 2.2 relays accept 2.1 clients, and 2.2 clients read 2.1
+> history. But files sent from a 2.2 client show as *unverified* in a 2.1
+> client, so upgrade the relay (which serves the web client) and the desktop
+> apps together. See the [Release notes](wiki/Release-Notes.md).
+
+---
+
 ## Cryptography
 
 | Purpose | Algorithm | Standard |
 |--------|-----------|----------|
-| Key encapsulation (confidentiality) | **ML-KEM-768** (Kyber) | FIPS 203 |
-| Digital signatures (authenticity) | **ML-DSA-65** (Dilithium) | FIPS 204 |
+| Key encapsulation (confidentiality) | **ML-KEM-768** | FIPS 203 |
+| Digital signatures (authenticity) | **ML-DSA-65** | FIPS 204 |
 | Content encryption | **AES-256-GCM** | FIPS 197 / SP 800-38D |
 | Key derivation | **HKDF-SHA-256** | RFC 5869 |
-| Vault & encrypted backups | **PBKDF2-SHA-256** (250k iters) + AES-256-GCM | — |
+| Safety code (fingerprint) | **SHA-256**(KEM public key ‖ DSA public key) | FIPS 180-4 |
+| Vault & encrypted backups | **PBKDF2-SHA-256**, 600,000 iterations + AES-256-GCM | SP 800-132 |
 
-AES-256 remains safe against quantum adversaries — Grover's algorithm only halves its effective strength to 128 bits — so the whole construction is post-quantum secure. The PQC primitives come from the audited [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) library, vendored as a single offline bundle (`client/vendor/lattix-pqc.js`) — **no CDNs, works offline**.
+AES-256 remains safe against quantum adversaries (Grover's algorithm halves its
+effective strength to 128 bits), so the whole construction is post-quantum. The
+PQC primitives come from the audited
+[`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) library,
+vendored as a single offline bundle (`client/vendor/lattix-pqc.js`) — **no CDNs,
+works offline**. Details: [wiki/Cryptography](wiki/Cryptography.md).
 
 ## How a message is protected
 
-Whether it's a 1:1 chat or a group, the same envelope scheme applies:
+The same envelope scheme covers 1:1 chats, groups, and files:
 
 1. A fresh random 256-bit **Content Encryption Key (CEK)** is generated.
-2. The message (or file) is AES-256-GCM encrypted **once** under the CEK.
-3. For **each party** — every recipient **and** the sender — an ML-KEM-768 shared secret is established, run through HKDF to a Key-Encryption-Key, and used to AES-GCM-**wrap** the CEK. Groups simply wrap the CEK for every member.
-4. The whole envelope (ciphertext + all wrapped keys) is **signed with the sender's ML-DSA-65 key**. The signature is **bound to the conversation** (e.g. the group id), so a signed envelope can't be replayed into a different conversation.
-5. The recipient verifies the signature, decapsulates their wrapped key, unwraps the CEK, and decrypts.
+2. The content is AES-256-GCM encrypted **once** under the CEK. For a file, its
+   name, type and size are encrypted too, under the same CEK with their own IV.
+3. For **each party** — every recipient **and** the sender — an ML-KEM-768
+   encapsulation yields a shared secret, HKDF turns it into a key-encryption key,
+   and that **wraps** the CEK.
+4. The sender **signs** the envelope with ML-DSA-65: the ciphertext (for files, a
+   SHA-256 of it), every wrapped key, and a **context** that binds it to its
+   conversation, so it can't be replayed into another one.
+5. The recipient verifies the signature against the sender's **pinned** key,
+   unwraps the CEK, and decrypts — and for files, checks the downloaded bytes
+   against the signed hash first.
 
-Wrapping for the sender too means you can read your own sent history across devices.
+Wrapping for the sender too means you can read your own sent history on any
+device holding your vault.
 
 ---
 
-## What's new in 2.0
+## Trust model
 
-Version 2.0 is a **usability, accessibility and performance release**. The
-cryptography, the wire format, and the zero-knowledge guarantee are unchanged —
-2.0 clients and 1.x histories are fully compatible — but almost every surface you
-touch has been reworked.
+- The relay **cannot read** messages or files — content, file names and types
+  are all ciphertext to it.
+- It **cannot forge** messages — it holds no ML-DSA signing key, and signatures
+  are bound to their conversation.
+- It **cannot silently swap keys** for a contact you've verified. Safety codes
+  are computed on your device, pinned on first sight, and a change to a verified
+  contact's key stops sending until you review it.
+- The account login token only gates *who may push to the relay under a
+  username*; it is deliberately **not** the root of trust for message security.
 
-**The conversation reads like a conversation.** Messages from one sender group
-under a single header, days are separated, every bubble carries a timestamp, group
-members get stable colors and avatars, links are clickable, and hovering a message
-offers Copy and Quote. Received images decrypt and display inline (only when their
-signature verified) with a click-to-zoom lightbox.
+**Verify the contacts that matter.** Scan their QR code or open their share
+link (which verifies automatically), or compare safety codes in the **Verify**
+dialog in person or over a call and click **Codes match — mark as verified**.
+Until you do, a contact is trusted on first use, like SSH host keys.
 
-**Nothing gets lost.** Drafts are kept per conversation and survive reloads; a
-failed send puts your text back in the box instead of dropping it; scrolling up no
-longer gets yanked to the bottom by an arriving message.
-
-**It's usable without a mouse, and with a screen reader.** ARIA roles and labels
-throughout, a real focus trap and focus return in every dialog, a visible focus
-ring, `prefers-reduced-motion` support, and shortcuts for the things you do
-constantly. Every theme passes an automated axe-core WCAG 2.1 A/AA audit with no
-serious or critical violations. The browser's `confirm()` and `prompt()` are gone.
-
-**Creating an account is harder to get wrong.** A confirm-password field, a
-strength meter, a Caps Lock warning, an explicit acknowledgement that the password
-can't be recovered, and a warning before an existing vault is overwritten.
-
-**It stays fast with a long history.** Renders are batched instead of running once
-per arriving envelope, the message list renders a capped window with a *Load
-earlier* button, boot work runs in parallel, and disappearing messages expire via
-a single sweep rather than one timer per message.
-
-**Plus:** a **System** theme that follows your OS live (applied before first paint,
-so no flash of the wrong palette), conversation search, online presence dots, an
-unread count in the tab title, drag-and-drop and clipboard-paste attachments,
-size-checked *before* encryption, and WebSocket reconnect with exponential backoff.
-
-Three small backwards-compatible relay changes support this: `/api/health` now
-advertises `max_file_bytes`, and the relay sends a presence snapshot on connect and
-refreshes presence on delivery.
-
-Ten test suites and 234 assertions were added or extended along the way — see
-[Development](#development). Six bugs turned up that weren't on the plan, four of
-them pre-existing; the full write-up is in the wiki.
+What the relay *does* see: who talks to whom and when, message sizes, avatars,
+group names and rosters. See [wiki/Security-and-Trust-Model](wiki/Security-and-Trust-Model.md).
 
 ---
 
@@ -116,52 +153,40 @@ them pre-existing; the full write-up is in the wiki.
 
 **Messaging**
 - 🔐 **Post-quantum end-to-end encryption** for every message and file.
-- 👨‍👩‍👧 **Group chats** — family or team groups, E2E encrypted (the CEK is wrapped per member). The relay still only ever sees ciphertext.
-- 📎 **Encrypted file sharing** — files are encrypted client-side and stored as opaque blobs (up to 50 MB by default). **Drag a file onto the conversation** or **paste an image** straight from the clipboard; oversized files are rejected before they're encrypted, not after.
-- 🖼️ **Inline image previews** — received images are decrypted and shown in the conversation with a click-to-zoom lightbox. Only ever applied to messages whose **signature verified**; a forged or tampered envelope stays an inert file card. Off by default (**Settings → Media**).
-- ⚡ **Real-time delivery** over WebSocket, with offline queueing and automatic reconnect (exponential backoff).
-- 🟢 **Presence** — a dot on each conversation shows who's online, including contacts who were already connected when you signed in.
-- ⏲️ **Disappearing messages** — a Signal-style per-conversation timer (30 s → 1 week); expired messages are purged on both client and server.
-- 🔔 **Notification tones & desktop alerts** — WebAudio send/receive tones and optional desktop notifications, plus an **unread count in the tab title** (no phone number or SMS — privacy-preserving by design).
-
-**The conversation view** *(rebuilt in 2.0)*
-- 🧵 **Message grouping** — consecutive messages from one sender collapse under a single header, with **date separators** between days and a timestamp on every bubble.
-- 🎨 **Per-sender colors and avatars** in group chats, so you can tell who's talking at a glance.
-- 🔗 **Linkified text**, and **Copy** / **Quote** actions on hover.
-- ⤓ **Jump to latest** — a pill appears when you scroll up; new messages never yank you away from what you're reading.
-- 📜 **Windowed history** — long conversations render a capped window with a **Load earlier** button instead of thousands of DOM nodes, and keep your scroll position when you expand it.
-- ✏️ **Per-conversation drafts** — switching chats or reloading the page doesn't lose what you'd typed, and a failed send puts your text back in the box.
+- 👨‍👩‍👧 **Group chats** — the CEK is wrapped per member; owners manage the roster, and ownership passes on if the owner leaves or deletes their account.
+- 📎 **Encrypted file sharing** — up to 50 MB by default (relay-configurable). Drag a file onto the conversation or paste an image; oversized files are rejected *before* encryption. Names and types are encrypted.
+- 🖼️ **Inline image previews** (PNG, JPEG, GIF, WebP, AVIF up to 8 MB) with a click-to-zoom lightbox — only for files whose signature verified. **On by default**; turn off under **Settings → Media**. SVG is never previewed.
+- ⚡ **Real-time delivery** over WebSocket with heartbeat, exponential-backoff reconnect, and a full resync of anything missed.
+- 🟢 **Presence** dots, scoped to your contacts.
+- ⏲️ **Disappearing messages** — per-conversation timer (30 s → 1 week); expired messages *and their file blobs* are purged on the relay.
+- 🔔 **Tones, desktop notifications**, and an unread count in the tab title.
 
 **Security & privacy**
-- ✍️ **Signature verification** on every message — 🔒 marks authenticated messages, ⚠ marks failures.
-- 🧾 **Key-fingerprint (safety-code) verification** — compare fingerprints out-of-band to defeat man-in-the-middle / key-substitution attacks.
-- 🔗 **QR / link sharing** — a scannable QR code and share URL (offline QR generator, no CDN) that opens a *verified* conversation with you.
-- 🛡️ **Account-creation guards** *(new in 2.0)* — confirm-password field, a live strength meter, a Caps Lock warning, an explicit acknowledgement that **your password cannot be recovered**, a warning before an existing vault is overwritten, and a nudge to take an encrypted backup on first run.
-- 🚫 **Block users** — locally hide and ignore messages from specific accounts.
-- 🗄️ **Encrypted local vault** — your private keys are sealed with your password (PBKDF2 + AES-GCM) and never leave the device.
+- ✍️ **Signature verification** on every message and file — 🔒 authenticated, ⚠ not.
+- 🧾 **Safety codes computed on-device**, pinned per relay, with a mark-as-verified control.
+- 🚨 **Key-change banner** — a verified contact's new key pauses sending until reviewed.
+- 🔗 **QR / share links that verify** — the embedded code is checked against the relay's keys.
+- 🪪 **Self-check** — on sign-in the app confirms the relay is publishing *your* real keys.
+- 🗄️ **Encrypted local vault** (PBKDF2 600k + AES-GCM), auto-upgraded from older vaults.
+- 🛡️ **Account-creation guards** — confirm password, strength meter, Caps Lock warning, can't-recover acknowledgement, vault-overwrite warning, backup nudge.
+- 🚫 **Block users** (client-side).
 
-**Accessibility & keyboard** *(new in 2.0)*
-- ⌨️ **Fully keyboard-operable** — <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> new conversation, <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>F</kbd> search, <kbd>/</kbd> to reach the message box, <kbd>Esc</kbd> to close. Every dialog traps focus and returns it where it came from.
-- 🦮 **Screen-reader support** — ARIA roles, labels, and live regions throughout. Every theme passes an automated **axe-core WCAG 2.1 A/AA** audit with no serious or critical violations.
-- 👁️ A visible **focus ring** on every control, and full **`prefers-reduced-motion`** support.
-- 💬 **No browser `confirm()`/`prompt()`** anywhere — every confirmation is a real in-app dialog you can style, read, and dismiss.
+**The conversation view**
+- 🧵 Message grouping, date separators, timestamps, per-sender colours and avatars in groups.
+- 🔗 Linkified text (no link previews — they'd leak your IP), Copy / Quote on hover.
+- 📜 Windowed rendering with **Load earlier**, **Jump to latest**, and complete history however long.
+- ✏️ Per-conversation drafts that survive reloads and failed sends.
 
-**Personalization**
-- 🎨 **Five theme choices** — **System** (follows your OS live), Light, Dark, Monokai, and a dark **Kali Linux** theme with the Kali dragon embedded. Your choice is applied **before first paint**, so there's no flash of the wrong palette on load.
-- 🔎 **Conversation search** — filter the sidebar as you type.
-- 🖌️ **Chat colors** — recolor your chat bubbles (red / green / blue / pink).
-- 🖼️ **Profile images** — set an avatar so contacts can identify you (downscaled on-device).
+**Accessibility & keyboard**
+- ⌨️ <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> new chat, <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>F</kbd> filter, <kbd>/</kbd> message box, <kbd>Esc</kbd> close. Every dialog traps and returns focus.
+- 🦮 ARIA roles, labels and live regions; every theme passes an axe-core **WCAG 2.1 A/AA** audit.
+- 👁️ Visible focus ring and `prefers-reduced-motion` support. No `confirm()`/`prompt()`.
 
-**Data & portability**
-- 📤 **Export chat history** as machine-readable JSON.
-- 💾 **Encrypted backups** — password-sealed (PBKDF2 + AES-GCM) backup files that are useless without your password, plus one-click restore.
-- 🧳 **Portable identity** — export/import your encrypted `.vault.json` to move to a new device.
-- 🧨 **Delete application data** — one button resets the device (and account) to a fresh install.
-
-**Platforms**
-- 🖥️ **Standalone installers** for **Windows, macOS, and Linux** — bundle a Python runtime, no dependencies to install.
-- 🧩 **Chrome extension** — the same client ships as an MV3 extension (no inline script; CSP-clean).
-- 🌐 **Zero frontend dependencies** — no external CDNs, works offline.
+**Personalization, data & platforms**
+- 🎨 Themes: **System**, Dark, Light, Monokai, Kali — applied before first paint. Chat bubble colours.
+- 🖼️ Profile images (downscaled on-device).
+- 📤 Export chat history as JSON · 💾 encrypted backups · 🧳 portable vault file · 🧨 delete all data.
+- 🖥️ Standalone installers (Windows, macOS, Linux) · 🧩 Chrome MV3 extension · 🌐 zero frontend dependencies.
 
 ## Screenshots
 
@@ -175,15 +200,19 @@ them pre-existing; the full write-up is in the wiki.
 
 ### Install a standalone app
 
-Double-click installers that bundle everything — **no Python needed on the target machine**. Build them locally on the matching OS, or let CI build them for you (GitHub → **Actions** → the relevant workflow → **Run workflow**, then download the artifact; pushing a `v*` tag attaches installers to a Release).
+Installers bundle everything — **no Python needed**. Download them from a
+[Release](https://github.com/aingram702/Lattix/releases), from the latest run of
+the matching workflow under **Actions**, or build locally on that OS:
 
-| Platform | Artifact | How to build |
-|----------|----------|--------------|
+| Platform | Artifact | Build locally |
+|----------|----------|---------------|
 | **Windows** | `LattixSetup.exe` | `installer\build.bat` (needs [Inno Setup 6](https://jrsoftware.org/isdl.php)) |
 | **macOS** | `Lattix-<ver>-<arch>.dmg` | `installer/macos/build.sh` |
 | **Linux** | `Lattix-<ver>-<arch>.run` | `installer/linux/build.sh` |
 
-See [`installer/README.md`](installer/README.md) for details. Launching Lattix starts a local relay on `http://localhost:8000` and opens it in your browser.
+Launching Lattix starts a local relay on `http://localhost:8000` and opens it in
+your browser. Pushing a `v*` tag builds all three and attaches them to a Release.
+Details: [`installer/README.md`](installer/README.md).
 
 ### Run from source
 
@@ -192,125 +221,106 @@ Requires **Python 3.10+**.
 ```bash
 git clone https://github.com/aingram702/Lattix.git
 cd Lattix
-
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-python run.py                      # opens http://localhost:8000
+python run.py                      # http://localhost:8000
 ```
 
-Try it end-to-end by opening the app in **two different browsers** (or one normal + one private window), creating two accounts, and chatting. Each browser holds its own identity vault.
+Open it in **two browsers** (or a normal and a private window), create two
+accounts, and chat. Each browser holds its own vault.
 
 ```bash
-python run.py --reload                     # dev auto-reload
-python run.py --no-browser                 # don't auto-open a browser
-python run.py --port 9000                  # a different port
+python run.py --reload             # dev auto-reload
+python run.py --no-browser         # don't open a browser
+python run.py --port 9000          # another port
 ```
 
-> **`--host 0.0.0.0` alone is not enough to share it.** Browsers expose
-> `crypto.subtle` only in a *secure context* — HTTPS, or `http://` on
-> `localhost` / `127.0.0.1`. Reached over plain `http://` at a LAN or public
-> address, the sign-in page loads and then every action fails, because the
-> browser has switched the crypto off. Lattix now says so instead of throwing.
->
-> To use it from another machine, either serve it over HTTPS (see
-> [Host it](#host-it-reachable-from-anywhere) — `deploy/vps/install-debian.sh`
-> does Caddy + Let's Encrypt in one command), or forward the port and keep
-> using `localhost`:
->
-> ```bash
-> ssh -N -L 8000:127.0.0.1:8000 user@your-server    # then open http://localhost:8000
-> ```
+> **`--host 0.0.0.0` alone won't let others use it.** Browsers only expose
+> `crypto.subtle` in a *secure context* — HTTPS, or `http://` on
+> `localhost`/`127.0.0.1`. Over plain `http://` at any other address the page
+> loads and explains that it can't run. Serve it over HTTPS
+> ([Host it](#host-it-reachable-from-anywhere)) or tunnel to localhost:
+> `ssh -N -L 8000:127.0.0.1:8000 user@your-server`.
 
 ### Chrome extension
 
-The `client/` directory doubles as an unpacked MV3 extension:
-
-1. Run a Lattix relay (`python run.py`, or install a standalone app).
-2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the `client/` folder.
-3. Click the Lattix toolbar icon, then click **Change** next to *Relay: …* on the sign-in screen and point it at your server URL (default `http://localhost:8000`). Once signed in it's under **Settings → Relay server**.
-
-All crypto still runs locally; the extension only talks to the relay you configure.
+`client/` doubles as an unpacked MV3 extension: `chrome://extensions` →
+**Developer mode** → **Load unpacked** → select `client/`. Click the toolbar
+icon, then **Change** next to *Relay* on the sign-in screen to point it at your
+relay (default `http://localhost:8000`).
 
 ---
 
 ## Host it (reachable from anywhere)
 
-To run Lattix as a public service over HTTPS so anyone can reach it, see **[DEPLOYMENT.md](DEPLOYMENT.md)**. It covers:
+**[DEPLOYMENT.md](DEPLOYMENT.md)** covers every option:
 
-- A **one-command Debian VPS install** (OVHcloud or any provider) — hardened systemd service behind tuned Caddy or nginx configs with Let's Encrypt: [`deploy/vps/`](deploy/vps/README.md).
-- A **one-command Docker Compose** setup with automatic HTTPS (Caddy + Let's Encrypt) and WSS for your own server or VPS.
-- Managed platforms — **Render**, **Fly.io**, **Railway** — with persistent-volume and health-check config.
-- A production [`Dockerfile`](Dockerfile) and a `docker-image` CI workflow that publishes a ready-to-deploy image to GHCR.
+- **Debian/Ubuntu VPS, one command** — hardened systemd service behind Caddy or
+  nginx with Let's Encrypt, plus a read-only `lattix-doctor.sh` diagnostic:
+  [`deploy/vps/`](deploy/vps/README.md).
+- **Docker Compose** with automatic HTTPS: [`deploy/docker-compose.yml`](deploy/docker-compose.yml).
+- **Render**, **Fly.io**, **Railway**, or the published image
+  `ghcr.io/aingram702/lattix`.
+- A **private relay over Tailscale**: [wiki](wiki/Private-Relay-with-Tailscale.md).
 
-The desktop apps and the Chrome extension connect to a hosted relay from **Relay: … Change** on the sign-in screen or **Settings → Relay server** — with a built-in connection test.
-
-HTTPS is **required** (browser crypto needs a secure context), and the relay runs as a **single instance** — sessions and real-time delivery are kept in memory, which is ideal for a family or team but not horizontally scaled.
+HTTPS is **required**, and the relay runs as a **single process** — sessions,
+presence and rate limits are in memory. Don't add `--workers`.
 
 ---
 
-## Trust model
+## Configuration reference
 
-Lattix is designed so the **server never needs to be trusted with your content**:
+All relay settings are environment variables. `run.py` flags override them.
 
-- It **cannot read** messages or files — it only ever sees ciphertext and public keys.
-- It **cannot forge** messages — it holds no user's ML-DSA signing key; recipients verify every signature client-side, and signatures are bound to their conversation.
-- Account login (the bearer token) only gates *who may push to the relay under a username*. It is deliberately **decoupled** from the E2E keys and is **not** the root of trust for message security.
+| Variable | Default | Purpose |
+|---|---|---|
+| `LATTIX_DB` | `data/lattix.db` | SQLite database path (also holds encrypted file blobs). |
+| `LATTIX_CLIENT_DIR` | `client/` next to `server/` | Web client to serve. If missing, the relay runs API-only and `/` answers 503. |
+| `LATTIX_HOST` / `LATTIX_BIND` | `127.0.0.1` | Bind address for `run.py` (`LATTIX_BIND` is the VPS env-file name). |
+| `PORT` / `LATTIX_PORT` | `8000` | Port for `run.py` and the container. |
+| `LATTIX_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxies whose `X-Forwarded-For` is trusted. `*` only when the relay is reachable *solely* through the proxy. |
+| `LATTIX_KEEPALIVE` | `75` | Idle keep-alive seconds; must exceed the proxy's upstream keep-alive. |
+| `LATTIX_MAX_FILE_MB` | `50` | Upload limit. Keep the proxy's body limit at least this large. |
+| `LATTIX_RATE_LIMIT_MAX` | `10` | Register/login attempts per IP per window. `0` disables — **tests only**. |
+| `LATTIX_RATE_LIMIT_WINDOW` | `300` | Rate-limit window, seconds. |
+| `LATTIX_CORS_ORIGINS` | *(empty)* | Extra comma-separated allowed origins, or `*`. |
+| `LATTIX_CORS_ALLOW_LOCAL` | `1` | Allow the desktop apps' `localhost` origin and the Chrome extension. `0` to disable. |
+| `LATTIX_DOCS_URL` | `/api/docs` | Interactive API docs. Set to empty to disable in production. |
 
-The one thing a malicious server *could* attempt is a **key-substitution (MITM)** attack — serving you the wrong public key for a contact. Lattix defends against this the same way Signal does: **fingerprint verification**. Open a contact's **Verify** dialog and compare the safety code with what they see on their device (in person, over a call, etc.). If they match, the channel is authentic.
-
-Blocking, disappearing-message timers, and profile images are conveniences layered on top of this core; they don't weaken it.
+Fixed limits: session tokens last 12 hours; history pages hold 500 envelopes;
+disappearing-message timers run up to 28 days; messages are capped at 2 MB of
+JSON; avatars at 400 KB; groups at 256 members. Full detail:
+[wiki/Configuration](wiki/Configuration.md).
 
 ---
 
 ## Project layout
 
 ```
-Lattix/                        # repository root (this is what you clone)
-├── .github/workflows/         # CI that builds each OS installer
-├── run.py                     # launcher (uvicorn wrapper)
-├── requirements.txt
-├── deploy/                    # Docker Compose + Caddy, Render, Fly, and vps/ (Debian install)
-├── server/                    # zero-knowledge relay (FastAPI)
-│   ├── main.py                #   REST + WebSocket + groups + static hosting
-│   ├── database.py            #   SQLite: users, envelopes, groups, blobs
-│   └── models.py              #   request/response schemas (payloads are opaque)
-├── client/                    # single-page app (also the Chrome extension)
-│   ├── index.html
-│   ├── css/styles.css         #   themes: system / light / dark / monokai / kali
-│   ├── js/
-│   │   ├── app.js             #   UI + conversation/group logic
-│   │   ├── crypto.js          #   E2E crypto (ML-KEM / ML-DSA / AES-GCM, backups)
-│   │   ├── api.js             #   REST + WebSocket client (timeouts, re-login, heartbeat, resync)
-│   │   ├── config.js          #   relay server setting (every build) + URL validation
-│   │   ├── preload.js         #   applies the stored theme before first paint
-│   │   ├── theme.js, sound.js #   appearance + notification tones
-│   │   └── qr.js              #   offline QR-code generator
-│   ├── vendor/lattix-pqc.js   #   bundled, offline post-quantum library
-│   ├── icons/                 #   app + extension icons
-│   ├── manifest.json          #   Chrome extension (MV3) manifest
-│   └── background.js          #   extension service worker
-├── installer/                 # standalone installers (all OSes)
-│   ├── lattix_launcher.py     #   frozen entry point (starts relay, opens browser)
-│   ├── lattix.spec            #   PyInstaller build (Win/mac/Linux)
-│   ├── lattix.ico / .icns     #   Windows / macOS icons
-│   ├── lattix.iss, build.ps1  #   Windows: Inno Setup -> LattixSetup.exe
-│   ├── linux/                 #   Linux: self-extracting .run installer
-│   └── macos/                 #   macOS: .dmg disk image
-├── scripts/
-│   ├── build_vendor.sh        #   rebuild the vendored crypto bundle
-│   ├── run_all_tests.mjs      #   starts a scratch relay and runs every suite
-│   ├── integration_test.mjs   #   full server + crypto end-to-end test
-│   ├── server_test.mjs        #   relay rules: validation, authz, presence
-│   ├── ui_test*.mjs           #   ten headless-browser UI suites (Playwright + axe)
-│   └── lib/harness.mjs        #   shared signup/unlock test helpers
-├── docs/screenshots/
-└── data/                      # SQLite database (created at runtime)
+Lattix/                          # repository root
+├── .github/workflows/           # tests, Docker image, and the three installer builds
+├── run.py                       # launcher (uvicorn wrapper with a helpful banner)
+├── requirements.txt · Dockerfile · Procfile
+├── server/                      # zero-knowledge relay (FastAPI + SQLite)
+│   ├── __init__.py              #   __version__ — single source of truth
+│   ├── main.py                  #   REST, WebSocket, groups, files, static hosting
+│   ├── database.py              #   schema, migrations, storage
+│   └── models.py                #   request validation (payloads stay opaque)
+├── client/                      # single-page app — also the Chrome extension
+│   ├── index.html · css/styles.css · manifest.json · background.js
+│   ├── js/app.js                #   UI, conversations, key trust (pinning, banner, verify)
+│   ├── js/crypto.js             #   ML-KEM / ML-DSA / AES-GCM, file format v2, vault
+│   ├── js/api.js                #   REST + WebSocket client (retries, re-login, resync)
+│   ├── js/config.js             #   relay URL setting and validation
+│   ├── js/{preload,theme,sound,qr}.js
+│   └── vendor/lattix-pqc.js     #   offline post-quantum bundle
+├── deploy/                      # Compose + Caddy, Fly, Render, and vps/ (Debian installer, doctor)
+├── installer/                   # PyInstaller spec + Windows / macOS / Linux packaging
+├── scripts/                     # test suites, test runner, vendor build
+├── docs/                        # screenshots, design notes, reviews/
+└── wiki/                        # user & operator documentation
 ```
-
-CI workflows that build each OS installer live under
-[`.github/workflows/`](.github/workflows/).
 
 ---
 
@@ -318,65 +328,74 @@ CI workflows that build each OS installer live under
 
 ### Tests
 
-Lattix ships **twelve suites, 310 assertions** — two that drive the real server
-with the real crypto module, and ten browser suites that drive the real UI in
-headless Chromium.
+**15 suites.** Three drive the relay directly, one tests the database layer, and
+eleven drive the real UI in headless Chromium.
 
 | Suite | Covers |
 |---|---|
-| `integration_test.mjs` | Protocol: registration, login, the key directory, encrypted messaging, plaintext-leak checks, sender self-decryption, tamper rejection, the encrypted-file round-trip, live WebSocket delivery. |
-| `server_test.mjs` | Relay rules: directory input validation, file-blob access control, group ownership succession, presence across multiple sessions, session invalidation. |
+| `db_test.py` | Migration from 1.x databases, owner succession on account deletion, expired-blob cleanup, history page size. |
+| `integration_test.mjs` | Protocol: registration, login, directory, encrypted messaging, plaintext-leak checks, self-decryption, tamper rejection, file round-trip, live delivery. |
+| `server_test.mjs` | Relay rules: input validation, file access control, group succession on leave, presence, session invalidation. |
+| `regression_test.mjs` | 2.2 fixes: fingerprint/key consistency, registration races, account deletion (groups, sockets, presence), binary WebSocket frames, history paging, file format v2 (encrypted names, substitution and replay resistance, v1 compatibility), vault work factor. |
 | `ui_test.mjs` | Rendering, grouping, date separators, scroll anchoring, failed-send recovery. |
-| `ui_test_media.mjs` | Encrypted image round-trip, previews, lightbox, group rendering. |
-| `ui_test_a11y.mjs` | axe-core WCAG 2.1 A/AA over every theme, plus a keyboard-only walkthrough. |
-| `ui_test_dialogs.mjs` | The in-app dialog controller, and a real encrypted backup/restore round-trip. |
-| `ui_test_composer.mjs` | Drag-drop, clipboard paste, drafts, the send-busy lock. |
-| `ui_test_sidebar.mjs` | Conversation filter, presence, unread title, reconnect backoff. |
 | `ui_test_auth.mjs` | Signup guards, strength meter, vault-overwrite warning. |
-| `ui_test_theme.mjs` | System theme, the anti-flash bootstrap, light-mode contrast. |
-| `ui_test_perf.mjs` | Render batching, the render window, the expiry sweep. |
-| `ui_test_relay.mjs` | Relay settings from sign-in and Settings, a remote relay from a cross-origin page, CORS/cache headers, first-frame WebSocket auth, restart with automatic re-login, missed-message resync, moving an identity. Starts its own relays; `LATTIX_PROXY_BASE` routes it through a reverse proxy. |
+| `ui_test_sidebar.mjs` | Filter, presence, unread title, reconnect backoff. |
+| `ui_test_composer.mjs` | Drag-drop, paste, drafts, send-busy lock. |
+| `ui_test_dialogs.mjs` | Dialog controller, encrypted backup/restore. |
+| `ui_test_media.mjs` | Encrypted image round-trip, previews, lightbox. |
+| `ui_test_theme.mjs` | System theme, anti-flash bootstrap, contrast. |
+| `ui_test_a11y.mjs` | axe-core WCAG 2.1 A/AA over every theme, keyboard walkthrough. |
+| `ui_test_perf.mjs` | Render batching, render window, expiry sweep. |
+| `ui_test_relay.mjs` | Relay switching, cross-origin relays, CORS/cache headers, WS auth, restart + re-login, resync, moving an identity. |
+| `ui_test_trust.mjs` | Share-link verification, key-change banner and send gating, mismatch warnings, 500+ message history, encrypted file names, vault upgrade. |
 
 ```bash
 pip install -r requirements.txt
 npm install && npx playwright install chromium
-
-# everything, against a throwaway relay it starts and cleans up itself
-node scripts/run_all_tests.mjs        # or: npm run test:all
+node scripts/run_all_tests.mjs            # or: npm run test:all
 ```
 
-To run one suite by hand, point it at a relay you started yourself:
+The runner starts its own relay on a scratch database. To run one suite by hand:
 
 ```bash
-LATTIX_DB=/tmp/lattix-test.db LATTIX_RATE_LIMIT_MAX=0 \
-  python run.py --no-browser --port 8111 &
-LATTIX_BASE=http://127.0.0.1:8111 node scripts/integration_test.mjs
+LATTIX_DB=/tmp/lattix-test.db LATTIX_RATE_LIMIT_MAX=0 python run.py --no-browser --port 8111 &
+LATTIX_BASE=http://127.0.0.1:8111 node scripts/regression_test.mjs
 ```
 
-> **`LATTIX_RATE_LIMIT_MAX=0` matters.** `/api/register` and `/api/login` are
-> rate-limited per IP (10 attempts per 5 minutes by default) and the buckets
-> live in the server process, so the suites — which create dozens of accounts
-> from one address — otherwise start getting `429`. `run_all_tests.mjs` sets it
-> for the relay it starts. Never set it on a public relay.
-
-The browser suites assert *behaviour* — what the DOM actually does — rather than
-screenshots, so they stay meaningful on a loaded CI box.
+`LATTIX_RATE_LIMIT_MAX=0` is needed because the suites create dozens of accounts
+from one address. Never set it on a public relay. `PW_CHROMIUM=/path/to/chrome`
+uses an existing Chromium instead of Playwright's download.
 
 ### Rebuilding the vendored crypto bundle
 
 ```bash
-bash scripts/build_vendor.sh        # needs Node.js
+bash scripts/build_vendor.sh        # needs Node.js; pins @noble/post-quantum
 ```
+
+More: [wiki/Development-and-Contributing](wiki/Development-and-Contributing.md).
 
 ---
 
 ## Security notes & limitations
 
-- Run behind **HTTPS/WSS** in any real deployment — the account secret is sent to the server at login, and `crypto.subtle` requires a secure context off `localhost`.
-- **No forward secrecy / ratcheting yet:** identity keys are long-lived (each message still uses a fresh ephemeral KEM encapsulation, so compromising one message's transcript doesn't reveal others, but compromising a long-term KEM secret key does expose past messages wrapped to it). A Double-Ratchet-style upgrade is the natural next step.
-- **Profile images** are stored in the directory so contacts can see them, so they're not part of the zero-knowledge guarantee (everything else — message and file content — is).
-- **Blocking** is enforced client-side (as in most E2E apps); a blocked user's server-side ability to send is unchanged, but you never see or get notified of their messages.
-- This is a from-scratch application intended as a solid, correct reference — **not a formally audited product**. Get a professional review before trusting it with lives.
+- **HTTPS/WSS is required** for any real deployment.
+- **No forward secrecy yet.** Identity keys are long-lived; each message uses a
+  fresh KEM encapsulation, but a stolen KEM secret key exposes past messages
+  wrapped to it. A ratchet is the planned upgrade.
+- **Trust on first use.** Until you verify a contact, their first-seen key is
+  trusted. A relay that substitutes keys *before* you ever talk to someone is
+  only caught by verifying (QR code, share link, or comparing codes).
+- **Metadata is visible to the relay** — who talks to whom and when, message
+  sizes, group names and rosters, avatars.
+- **Replay within a conversation.** Signatures bind an envelope to its
+  conversation, not to a moment, so a hostile relay could re-deliver an old
+  message in the same chat. Disappearing-message timers are also set by the
+  relay, not signed.
+- **Blocking is client-side**, as in most E2E apps.
+- A careful reference implementation, **not a formally audited product**. Get a
+  professional review before trusting it with lives.
+
+Report vulnerabilities privately via the repository's security advisories.
 
 ---
 

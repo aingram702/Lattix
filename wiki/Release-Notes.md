@@ -1,5 +1,102 @@
 # Release Notes
 
+## 2.2.0
+
+A **security release** from a full code review. Every finding was reproduced
+against a live relay before it was fixed and now has a regression test; the
+write-up is in [`docs/reviews/REVIEW-2.2.0.md`](https://github.com/aingram702/Lattix/blob/main/docs/reviews/REVIEW-2.2.0.md).
+
+### Compatibility
+
+- **Relay:** drop-in. The database migrates itself on start; 2.1 clients keep
+  working against a 2.2 relay.
+- **Clients:** a 2.2 client reads 2.1 history, vaults, backups and files. A 2.1
+  client shows **files sent from 2.2 as unverified** (new file format), so
+  update the desktop apps and extension alongside the relay. The web client
+  updates with the relay.
+- **API:** `/api/register` now refuses wrongly sized keys and a fingerprint that
+  doesn't match the keys (`422`). Real clients are unaffected.
+
+### Key trust
+
+- **Safety codes are computed on your device.** The app used to display the
+  fingerprint the relay *reported*, so a relay could swap a contact's keys and
+  still show the correct code. It now hashes the keys it actually uses.
+- **Key pinning.** The first key seen for each contact is pinned per relay. A
+  change for an unverified contact re-pins with a notice. A change for a
+  **verified** contact shows a red banner, marks their messages unverified, and
+  **pauses sending** until you review or accept the new code.
+- **Share links and QR codes verify.** Their `fp=` code was always there but
+  ignored. A match now marks the contact verified; a mismatch warns and pauses
+  sending.
+- **Verify dialog** shows verified status, a previous code after a change, and a
+  mark/unmark control.
+- **Self-check** at sign-in: you're warned if the relay publishes keys for you
+  that aren't the ones in your vault.
+
+### Files (format v2)
+
+- **Names, types and sizes are encrypted.** The relay stores placeholders.
+- **Contents are signed.** The signature covers a SHA-256 of the ciphertext.
+  Before, any recipient — in a group, any member — could re-encrypt different
+  bytes under the file's key and have them pass the sender's signature.
+- Downgrading a v2 payload to v1 shape fails verification. v1 files still open.
+
+### Vault
+
+- New vaults and backups use **PBKDF2-SHA-256 at 600,000 iterations** (was
+  250,000), recorded in the file. Older vaults open as before and are re-sealed
+  at the new strength after the next unlock. Absurd iteration counts from a
+  tampered file are refused.
+
+### Relay
+
+- **Deleting a group owner's account no longer deletes the group** for every
+  other member; ownership passes to the longest-standing member.
+- **Long conversations load completely.** History was capped at 500 envelopes
+  per request and the client never paged, so a reload showed only the oldest
+  500 and the next live message hid the gap permanently. The client now pages;
+  `/api/health` advertises `history_page_size`.
+- **1.x databases start again.** An index on a migrated column was created
+  before the migration added it ("no such column: file_id").
+- **Deleted accounts are disconnected** (open WebSockets closed with 4401) and
+  contacts see them go offline.
+- **Expired disappearing files are erased immediately**, not up to 6 hours later.
+- Racing registrations for one name return `409`, not `500`.
+- Group rosters must be valid usernames.
+- Binary WebSocket frames are ignored instead of raising.
+- `LATTIX_DOCS_URL=` now hides the OpenAPI schema too (moved to
+  `/api/openapi.json`); `/redoc` is no longer served.
+
+### Operations & CI
+
+- The installer and Docker workflows referenced a nonexistent `Lattix/`
+  directory and failed; they now build from the repository root. Untagged
+  installer builds take their version from `server/__init__.py`.
+- New **Tests** workflow runs all 15 suites on every push and pull request.
+- Docker backup instructions used `cp` on the live database, which can miss
+  writes in SQLite's WAL; they now use SQLite's online backup.
+
+### Tests
+
+15 suites (up from 12): `db_test.py`, `regression_test.mjs` and
+`ui_test_trust.mjs` are new.
+
+## 2.1.1
+
+A fix release for VPS deployments (review: [`docs/reviews/REVIEW-2.1.1.md`](https://github.com/aingram702/Lattix/blob/main/docs/reviews/REVIEW-2.1.1.md)).
+
+- **Security:** a file message could reference someone else's blob and then
+  download it as that message's sender (IDOR). File messages must now reference
+  a blob their sender uploaded, and `payload.file_id` is forced to it.
+- File metadata is bounded (`file_id` 32 hex chars, filename/MIME ≤ 255, size ≥ 0).
+- The API-only `503` at `/` is plain text, as intended.
+- `run.py` honours the VPS env file's `LATTIX_BIND` / `LATTIX_PORT`.
+- `install-debian.sh`: checks AAAA records against the VPS's IPv6, stops
+  apache2, refuses partial source trees, saves state before requesting the
+  certificate.
+- New read-only diagnostic: `deploy/vps/lattix-doctor.sh`.
+
 ## 2.1.0
 
 A **remote-relay release**: choosing a relay is back in the interface for every
